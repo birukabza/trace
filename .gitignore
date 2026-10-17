@@ -1,0 +1,48 @@
+.projects/cache
+.projects/vault
+.projects/state.test.json
+.projects/state.local.test.json
+.env
+.env.*
+!.env.example
+
+# Local Stripe Projects state and generated agent/editor setup
+/.projects/
+/.agents/
+/.claude/
+/.cursor/
+/.cursorignore
+/AGENTS.md
+/CLAUDE.md
+
+# Generated model responses, experiment code, and run logs
+/experiments/
+
+# Local secrets (never store credentials in source files)
+/.secrets/
+
+# Python dependencies and caches
+/.venv/
+/venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# JavaScript dependencies and generated builds
+node_modules/
+/.next/
+/.next-production/
+/dist/
+/coverage/
+*.log
+
+# OS/editor temporary files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Local application records and verification evidence
+/data/
+/artifacts/
+*.tsbuildinfo
