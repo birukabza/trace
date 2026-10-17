@@ -9,10 +9,12 @@ Execution starts automatically; no intermediate approval is required.
 
 Use Node.js 24 or later in WSL. Install dependencies with `npm install`.
 Stripe Projects supplies the CreateOS credentials in its generated `.env` file.
-Keep your River key in the ignored `.env.local` file:
+Copy `.env.example` to `.env.local`, then add your River key and the ID of
+your own CreateOS sandbox. Keep `.env.local` ignored:
 
 ```dotenv
 RIVER_API_KEY=your_river_api_key
+CREATEOS_SANDBOX_ID=your_sandbox_id
 ```
 
 Start the app with `npm run dev` and open `http://localhost:3000`.

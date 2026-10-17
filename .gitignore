@@ -1,12 +1,19 @@
-
-# Local Stripe Projects state and generated agent/editor setup
+# Local Stripe Projects state and editor permissions
 /.projects/
-/.agents/
 /.claude/
-/.cursor/
-/.cursorignore
-/AGENTS.md
-/CLAUDE.md
+
+# Share reviewed Stripe CLI instructions; keep other agent/editor tooling local
+/.agents/*
+!/.agents/skills/
+/.agents/skills/*
+!/.agents/skills/stripe-projects-cli/
+/.cursor/*
+!/.cursor/rules/
+/.cursor/rules/*
+!/.cursor/rules/stripe-projects-cli.mdc
+
+# Private presentation notes
+/docs/demo.md
 
 # Generated model responses, experiment code, and run logs
 /experiments/
@@ -40,10 +47,7 @@ Thumbs.db
 /artifacts/
 *.tsbuildinfo
 
-.projects/cache
-.projects/vault
-.projects/state.test.json
-.projects/state.local.test.json
+# Local credentials; only the empty setup template is public
 .env
 .env.*
 !.env.example
