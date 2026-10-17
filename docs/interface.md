@@ -1,7 +1,8 @@
 # Research experience
 
-The home page and research flow share the same cream background, dark text,
-and burnt-orange accent. Processing shows a paper title, one animated orb,
+The home page and research flow share a near-black background, off-white text,
+sans-serif headings, pill controls, and rounded charcoal surfaces inspired by
+the [Grok Bot reference](https://x.ai/bot). Processing shows a paper title, one animated orb,
 one status sentence, and Cancel. The interface follows the saved run status.
 It does not simulate progress percentages or invent intermediate work.
 
@@ -9,7 +10,7 @@ The UI uses [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs)
 for reading, planning, queueing, execution, and review. Its canvas animations
 pause offscreen and in background tabs and respect reduced-motion preferences.
 A visible pause control lets people stop the animation. The landing page keeps
-its existing Shaders sphere.
+a small monochrome Shaders sphere in the introduction link.
 
 Review leads with a short experiment description and an explicit approval.
 The exact hypothesis, method, code, source quotations, and scope details open

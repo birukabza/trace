@@ -20,9 +20,9 @@ export function ResearchShader({ variant }: { variant: "hero" | "compact" }) {
     {!compact && <><span className="art-cross one" aria-hidden="true">+</span><span className="art-cross two" aria-hidden="true">+</span></>}
     <div className="shader-sphere" aria-hidden="true">
       {!paused && !reducedMotion && available && <Shader disableTelemetry onUnavailable={() => setAvailable(false)} style={{ width: "100%", height: "100%" }}>
-        <FlowingGradient colorA="#3b170b" colorB="#bd4622" colorC="#f2b16f" colorD="#e5662e" distortion={0.65} speed={compact ? 0.45 : 0.22} seed={4} />
-        <ContourLines levels={28} lineWidth={0.65} softness={0.15} colorMode="custom" lineColor="#6b2d15" backgroundColor="#eaa05d" opacity={0.42} />
-        <Spherize radius={1} depth={0.7} lightPosition={{ x: 0.2, y: 0.2 }} lightIntensity={0.3} lightColor="#ffe4c3" />
+        <FlowingGradient colorA="#222528" colorB="#737a80" colorC="#f0f0ed" colorD="#b9bec1" distortion={0.65} speed={compact ? 0.45 : 0.22} seed={4} />
+        <ContourLines levels={28} lineWidth={0.65} softness={0.15} colorMode="custom" lineColor="#4e5357" backgroundColor="#b9bec1" opacity={0.42} />
+        <Spherize radius={1} depth={0.7} lightPosition={{ x: 0.2, y: 0.2 }} lightIntensity={0.3} lightColor="#ffffff" />
         <FilmGrain strength={0.13} bias={0.6} />
       </Shader>}
       <div className="shader-contours" />
