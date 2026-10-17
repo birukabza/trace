@@ -1,7 +1,8 @@
 import { extractText } from "unpdf";
+import { RESEARCH_LIMITS } from "../capabilities";
 
-const MAX_BYTES = 12_000_000;
-export const MAX_SOURCE_LENGTH = 80_000;
+const MAX_BYTES = RESEARCH_LIMITS.sourceBytes;
+export const MAX_SOURCE_LENGTH = RESEARCH_LIMITS.sourceCharacters;
 const HOSTS = new Set(["arxiv.org", "www.arxiv.org", "export.arxiv.org", "github.com", "api.github.com", "raw.githubusercontent.com"]);
 
 export function validateSourceUrl(input: string): URL {

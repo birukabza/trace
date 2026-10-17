@@ -3,7 +3,17 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { analysisSchema, riverJson } from "../src/lib/server/river";
+import { analysisSchema, parseModelResponse, riverJson } from "../src/lib/server/river";
+
+test("an oversized optional display summary cannot block a valid scientific plan", () => {
+  const plan = {claimId:"one",title:"A bounded test",summary:"long summary ".repeat(30),hypothesis:"A hypothesis",method:"Fixed method",dataset:"Fixed data",metrics:["value"],dependencies:["numpy"],estimatedSeconds:5,limitations:["Component only"],pythonCode:"print(42)\n",scope:"component_check"};
+  const response = {title:"Paper",claims:[{id:"one",text:"Claim",sourceLocation:"Section 1",evidenceId:"paper:0",feasible:true,reason:"Small test"}],plan,blockedReason:null};
+  const parsed = parseModelResponse(JSON.stringify(response),analysisSchema);
+  assert.equal(parsed.plan?.summary,undefined);
+  assert.equal(parsed.plan?.method,plan.method);
+  assert.equal(parsed.plan?.pythonCode,plan.pythonCode);
+  assert.throws(()=>parseModelResponse(JSON.stringify({...response,plan:{...plan,estimatedSeconds:1000}}),analysisSchema),/estimatedSeconds/);
+});
 
 test("rejected model answers retain diagnostics without storing request credentials", async t => {
   const directory = mkdtempSync(join(tmpdir(), "trace-model-response-"));

@@ -1,5 +1,118 @@
-import { CreateosSandboxClient } from "@nodeops-createos/sandbox";
+import { CreateosSandboxClient, type Sandbox } from "@nodeops-createos/sandbox";
 import { createosKey, SANDBOX_ID, SANDBOX_URL } from "./config";
+
+// An empty CreateOS allowlist means OPEN egress. A single reserved TEST-NET
+// address keeps the host policy restrictive without exposing package registries.
+// This is restricted external egress, not a provider-supported deny-all token.
+const EXPERIMENT_EGRESS = ["192.0.2.1:443"];
+const CONTROL_REQUEST = { timeoutMs: 30_000, retry: false } as const;
+const CONTROL_WAIT = { timeoutMs: 180_000, request: { timeoutMs: 10_000, retry: false } } as const;
+
+export interface ExperimentSandboxMetadata {
+  id: string;
+  forkedFrom: string;
+  egressRestricted: boolean;
+}
+
+export interface ExperimentSandboxSession {
+  id: string;
+  egressRestricted: boolean;
+  pause(): Promise<void>;
+  resume(): Promise<void>;
+}
+
+function sandboxClient() {
+  const key = createosKey();
+  if (!key) throw new Error("CreateOS credentials are unavailable. Run stripe projects env --pull and restart the server.");
+  return new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 30_000, retry: false });
+}
+
+async function pauseWorkspace(box: Sandbox): Promise<void> {
+  // Deliberately independent of the run's AbortSignal: cancellation must still
+  // stop compute, including when setup failed before a session was returned.
+  await box.refresh(CONTROL_REQUEST);
+  if (box.status === "forking") await box.waitUntilPaused(CONTROL_WAIT);
+  if (box.status === "resuming" || box.status === "creating") await box.waitUntilRunning(CONTROL_WAIT);
+  if (box.status === "running") await box.pause(CONTROL_REQUEST);
+  if (box.status === "pausing") await box.waitUntilPaused(CONTROL_WAIT);
+  if (box.status !== "paused") throw new Error(`Could not pause experiment workspace ${box.id}: ${box.status}.`);
+}
+
+export async function pauseExperimentSandbox(id: string): Promise<void> {
+  if (id === SANDBOX_ID) throw new Error("Recovery cannot pause the base workspace.");
+  const box = await sandboxClient().getSandbox(id, CONTROL_REQUEST);
+  await pauseWorkspace(box);
+}
+
+async function resumeWorkspace(box: Sandbox, signal?: AbortSignal): Promise<void> {
+  const request = { ...CONTROL_REQUEST, signal };
+  const wait = { ...CONTROL_WAIT, signal };
+  await box.refresh(request);
+  if (box.status === "forking" || box.status === "pausing") await box.waitUntilPaused(wait);
+  if (box.status === "paused" || box.status === "error") await box.resume(request);
+  if (box.status !== "running") await box.waitUntilRunning(wait);
+}
+
+export async function createExperimentSandbox(
+  runId: string,
+  signal: AbortSignal,
+  onCreated: (metadata: ExperimentSandboxMetadata) => void | Promise<void>,
+): Promise<ExperimentSandboxSession> {
+  const client = sandboxClient();
+  const request = { ...CONTROL_REQUEST, signal };
+  const wait = { ...CONTROL_WAIT, signal };
+  const base = await client.getSandbox(SANDBOX_ID, request);
+  const restoreBase = base.status === "running" || base.status === "resuming";
+  let child: Sandbox | undefined;
+
+  try {
+    try {
+      if (base.status === "resuming") await base.waitUntilRunning(wait);
+      if (base.status === "running") await base.pause(request);
+      if (base.status !== "paused") await base.waitUntilPaused(wait);
+      child = await base.fork({
+        start_paused: true,
+        ingress_enabled: false,
+        egress: EXPERIMENT_EGRESS,
+        // A nonempty map replaces inherited declared environment variables.
+        // The base snapshot itself must contain no credentials or secret files.
+        envs: { TRACE_EXPERIMENT_ID: runId },
+      }, request);
+      // Persist before polling: a crash or cancellation must leave an identity
+      // that recovery can find. Never blindly retry an ambiguous fork request.
+      await onCreated({ id: child.id, forkedFrom: base.id, egressRestricted: false });
+      await child.waitUntilPaused(wait);
+    } finally {
+      // The existing hackathon VM is never destroyed. Restore its original
+      // running state with independent requests even if the run was cancelled.
+      if (restoreBase) await resumeWorkspace(base);
+    }
+
+    await resumeWorkspace(child, signal);
+    await child.setAutoPause(300, request);
+    const policy = await child.getEgress(request);
+    if (policy.egress.length !== EXPERIMENT_EGRESS.length ||
+      !EXPERIMENT_EGRESS.every(rule => policy.egress.includes(rule))) {
+      throw new Error("The experiment workspace network policy could not be verified. No experiment was executed.");
+    }
+    await onCreated({ id: child.id, forkedFrom: base.id, egressRestricted: true });
+    const sessionBox = child;
+    return {
+      id: child.id,
+      egressRestricted: true,
+      pause: () => pauseWorkspace(sessionBox),
+      resume: () => resumeWorkspace(sessionBox, signal),
+    };
+  } catch (error) {
+    if (child) {
+      try { await pauseWorkspace(child); }
+      catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "Experiment setup failed and its workspace could not be confirmed paused.");
+      }
+    }
+    throw error;
+  }
+}
 
 export function numericalRunner(code: string): string {
   const encoded = Buffer.from(code, "utf8").toString("base64");
@@ -39,12 +152,12 @@ exec(compile(tree, '<approved-experiment>', 'exec'), {'__builtins__': safe, '__n
 `;
 }
 
-export async function executeNumerical(code: string, runId: string, attempt: number, signal: AbortSignal) {
+export async function executeNumerical(code: string, runId: string, attempt: number, signal: AbortSignal, sandboxId = SANDBOX_ID) {
   const key = createosKey();
   if (!key) throw new Error("CreateOS credentials are unavailable. Run stripe projects env --pull and restart the server.");
   const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 75_000, retry: false });
-  const box = await client.getSandbox(SANDBOX_ID, { signal, timeoutMs: 15_000 });
-  if (box.status !== "running") throw new Error("The hackathon sandbox is not running. Resume it in CreateOS, then start a new run.");
+  const box = await client.getSandbox(sandboxId, { signal, timeoutMs: 15_000 });
+  if (box.status !== "running") throw new Error("The experiment workspace is not running. Resume it in CreateOS, then retry the investigation.");
   const path = `/tmp/repro-${runId}-${attempt}.py`;
   await box.files.upload(path, numericalRunner(code), { signal, timeoutMs: 15_000 });
   const started = Date.now();

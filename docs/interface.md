@@ -12,10 +12,12 @@ pause offscreen and in background tabs and respect reduced-motion preferences.
 A visible pause control lets people stop the animation. The landing page keeps
 a small monochrome Shaders sphere in the introduction link.
 
-Review leads with a short experiment description and an explicit approval.
-The exact hypothesis, method, code, source quotations, and scope details open
-on demand. New model responses include a plain-language summary. Existing
-saved plans use their title and remain compatible with the new interface.
+New investigations proceed automatically from reading to writing, running and,
+when code fails, repairing. A small phase trail follows persisted state.
+“See the agent work” opens the generated code, actual errors, revision
+diagnoses, source coverage and activity. The main screen stays minimal.
+Older pending investigations have a Continue action; viewing history never
+starts them automatically. No approval step is used for new investigations.
 
 Results lead with the conclusion and its scope. Measurements, execution
 records, and research details are expandable. Recorded examples remain
@@ -25,7 +27,11 @@ from the research flow.
 
 A persistent live region announces when a review, result, or stopped state
 replaces processing. Navigation still invalidates stale asynchronous responses.
-Approval and execution rules are unchanged.
+Execution records select the latest attempt first while keeping every earlier
+version and error accessible. Sponsor details distinguish Stripe Projects
+provisioning from CreateOS execution; fork, network and pause claims appear
+only when recorded metadata confirms them. The home page explains supported
+paper workloads and the text and execution budgets through one disclosure.
 
 ## Verification
 

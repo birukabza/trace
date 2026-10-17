@@ -1,4 +1,4 @@
-export type RunStatus = "analyzing" | "awaiting_approval" | "queued" | "running" | "completed" | "blocked" | "failed" | "cancelled";
+export type RunStatus = "analyzing" | "awaiting_approval" | "queued" | "running" | "repairing" | "completed" | "blocked" | "failed" | "cancelled";
 export type ExperimentScope = "component_check" | "reduced_experiment" | "reproduction";
 
 export interface Claim {
@@ -42,6 +42,10 @@ export interface Attempt {
   exitCode: number;
   durationMs: number;
   changeReason?: string;
+  provider?: "createos";
+  sandboxId?: string;
+  codeHash?: string;
+  credentialSource?: "stripe_projects" | "custom";
 }
 
 export interface ExperimentResult {
@@ -59,7 +63,7 @@ export interface Run {
   status: RunStatus;
   createdAt: string;
   updatedAt: string;
-  paper?: { title: string; url: string; textExcerpt: string; sourceType: string; sourceHash?: string; repositoryHash?: string };
+  paper?: { title: string; url: string; textExcerpt: string; sourceType: string; sourceHash?: string; repositoryHash?: string; textCharacters?: number; textTruncated?: boolean; repositoryCharacters?: number; repositoryTruncated?: boolean };
   claims: Claim[];
   plan?: ExperimentPlan;
   events: RunEvent[];
@@ -67,6 +71,9 @@ export interface Run {
   result?: ExperimentResult;
   error?: string;
   mode: "live" | "example";
+  executionMode?: "automatic";
+  repairs?: { afterAttempt: number; diagnosis: string; summary: string; codeHash: string; at: string }[];
+  sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean };
 }
 
 export interface Health {

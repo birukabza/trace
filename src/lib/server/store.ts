@@ -5,10 +5,11 @@ import { randomUUID } from "node:crypto";
 import type { Run, RunStatus } from "../types";
 
 const transitions: Record<RunStatus, RunStatus[]> = {
-  analyzing: ["awaiting_approval", "blocked", "failed", "cancelled"],
-  awaiting_approval: ["queued", "cancelled"],
+  analyzing: ["awaiting_approval", "queued", "blocked", "failed", "cancelled"],
+  awaiting_approval: ["queued", "blocked", "failed", "cancelled"],
   queued: ["running", "cancelled", "failed"],
-  running: ["completed", "blocked", "failed", "cancelled"],
+  running: ["repairing", "completed", "blocked", "failed", "cancelled"],
+  repairing: ["running", "blocked", "failed", "cancelled"],
   completed: [], blocked: [], failed: [], cancelled: [],
 };
 
@@ -35,10 +36,13 @@ export class RunStore {
     return row ? JSON.parse(row.body) as Run : undefined;
   }
   list(): Run[] {
-    return (this.db.prepare("SELECT body FROM runs WHERE id IN (SELECT id FROM runs ORDER BY updated_at DESC LIMIT 50) OR json_extract(body, '$.status') IN ('analyzing','awaiting_approval','queued','running') ORDER BY updated_at DESC").all() as { body: string }[]).map(row => JSON.parse(row.body) as Run);
+    return (this.db.prepare("SELECT body FROM runs WHERE id IN (SELECT id FROM runs ORDER BY updated_at DESC LIMIT 50) OR json_extract(body, '$.status') IN ('analyzing','awaiting_approval','queued','running','repairing') ORDER BY updated_at DESC").all() as { body: string }[]).map(row => JSON.parse(row.body) as Run);
   }
   active(): Run[] {
-    return (this.db.prepare("SELECT body FROM runs WHERE json_extract(body, '$.status') IN ('analyzing','awaiting_approval','queued','running')").all() as { body: string }[]).map(row => JSON.parse(row.body) as Run);
+    return (this.db.prepare("SELECT body FROM runs WHERE json_extract(body, '$.status') IN ('analyzing','awaiting_approval','queued','running','repairing')").all() as { body: string }[]).map(row => JSON.parse(row.body) as Run);
+  }
+  cleanupPending(): Run[] {
+    return (this.db.prepare("SELECT body FROM runs WHERE json_type(body, '$.sandbox.forkedFrom') = 'text' AND json_extract(body, '$.sandbox.forkedFrom') != '' AND COALESCE(json_extract(body, '$.sandbox.pausedAfterRun'), 0) != 1").all() as { body: string }[]).map(row => JSON.parse(row.body) as Run);
   }
   save(run: Run) {
     this.db.prepare("INSERT INTO runs (id,updated_at,body) VALUES (?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,body=excluded.body").run(run.id, run.updatedAt, JSON.stringify(run));

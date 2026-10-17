@@ -6,9 +6,11 @@ import type { Health, Run } from "@/lib/types";
 import { TraceMark } from "./trace-mark";
 import { ResearchShader } from "./research-shader";
 import { RunWorkspace, ProcessView, ACTIVE_STATUSES, STATUS_LABELS } from "./run-workspace";
+import { ResearchScope } from "./research-scope";
+import { PlatformProof } from "./platform-proof";
 
 const KMEANS_URL = "https://theory.stanford.edu/~sergei/papers/kMeansPP-soda.pdf";
-const ATTENTION_URL = "https://arxiv.org/abs/1706.03762";
+const RANDOMIZED_SVD_URL = "https://arxiv.org/abs/0909.4061";
 
 type ModalName = "settings" | "history" | null;
 
@@ -66,17 +68,20 @@ function Landing({ sourceUrl, setSourceUrl, repositoryUrl, setRepositoryUrl, onS
       <div className="source-panel">
         <div className="source-panel-top"><span className="source-label">What would you like to verify?</span><span>arXiv or GitHub</span></div>
         <form onSubmit={onSubmit}>
-          <div className="source-form"><Link2 size={21} strokeWidth={1.4} /><input type="url" aria-label="Paper or GitHub URL" placeholder="Paste a paper or GitHub link" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} required disabled={busy} /><button className="primary-button" type="submit" disabled={busy}>{busy ? "Opening research" : "Analyze paper"}{busy ? <Loader2 size={16} className="spin" /> : <ArrowUpRight size={17} />}</button></div>
+          <div className="source-form"><Link2 size={21} strokeWidth={1.4} /><input type="url" aria-label="Paper or GitHub URL" aria-describedby="automatic-run-note" placeholder="Paste a paper or GitHub link" value={sourceUrl} onChange={(event) => setSourceUrl(event.target.value)} required disabled={busy} /><button className="primary-button" type="submit" disabled={busy}>{busy ? "Opening research" : "Investigate"}{busy ? <Loader2 size={16} className="spin" /> : <ArrowUpRight size={17} />}</button></div>
+          <p className="sr-only" id="automatic-run-note">Investigate starts automatic code generation, execution, and up to three execution attempts.</p>
           {showRepository && <><div className="repository-field"><label htmlFor="author-repo">Author repository</label><input id="author-repo" type="url" placeholder="https://github.com/author/repository (optional)" value={repositoryUrl} onChange={(event) => setRepositoryUrl(event.target.value)} aria-describedby="repository-note" /></div><p id="repository-note" className="repository-note">The README adds context. Repository code is not executed automatically.</p></>}
         </form>
       </div>
-      <div className="source-bottom"><div className="examples"><span>Explore</span><button className="example-chip" onClick={onExample} disabled={busy}>k-means++ · recorded <Play size={9} /></button><button className="example-chip" onClick={() => setSourceUrl(ATTENTION_URL)}>Attention Is All You Need <ArrowUpRight size={10} /></button></div><div className="source-options"><button className="text-button" onClick={() => setShowRepository(!showRepository)}>{showRepository ? <X size={11} /> : <Plus size={11} />}{showRepository ? "Hide repository" : "Add author repository"}</button></div></div>
+      <div className="source-bottom"><div className="examples"><span>Explore</span><button className="example-chip" onClick={onExample} disabled={busy}>k-means++ · recorded <Play size={9} /></button><button className="example-chip" onClick={() => setSourceUrl(RANDOMIZED_SVD_URL)}>Randomized SVD <ArrowUpRight size={10} /></button></div><div className="source-options"><button className="text-button" onClick={() => setShowRepository(!showRepository)}>{showRepository ? <X size={11} /> : <Plus size={11} />}{showRepository ? "Hide repository" : "Add author repository"}</button></div></div>
+      <div id="investigation-scope"><ResearchScope /></div>
+      <PlatformProof />
     </section>
     <section className="how-section" id="how-it-works" aria-labelledby="how-title">
       <div className="section-heading"><div><div className="eyebrow">From claim to evidence</div><h2 id="how-title">A paper is a starting point.<br />Follow the evidence.</h2></div><p>A successful script is only the beginning. Trace keeps the source, the method, and the measured outcome together.</p></div>
       <div className="steps-grid">
         <article className="step-card"><span className="step-number">[01]</span><div className="step-graphic"><div className="paper-graphic"><i /><i /><i /><i /><i /></div></div><h3>Find a testable claim.</h3><p>The agent reads your source and identifies claims we can put to the test.</p></article>
-        <article className="step-card"><span className="step-number">[02]</span><div className="step-graphic execution-graphic"><span>&lt;/&gt;</span><ChevronRight size={12} /><span>run</span><ChevronRight size={12} /><span><Check size={13} /></span></div><h3>Review. Then run.</h3><p>Inspect the protocol and generated Python before execution in an isolated sandbox.</p></article>
+        <article className="step-card"><span className="step-number">[02]</span><div className="step-graphic execution-graphic"><span>&lt;/&gt;</span><ChevronRight size={12} /><span>run</span><ChevronRight size={12} /><span><Check size={13} /></span></div><h3>Write. Run. Repair.</h3><p>Trace writes Python, runs it in CreateOS, and fixes coding errors using the actual output. No approval step.</p></article>
         <article className="step-card"><span className="step-number">[03]</span><div className="step-graphic"><div className="evidence-graphic"><i /><i /><i /><i /></div></div><h3>Keep the paper trail.</h3><p>Compare reported and observed results, with logs, limitations, and an exportable report.</p></article>
       </div>
       <div className="philosophy"><span className="eyebrow"><ShieldCheck size={14} />Evidence over confidence</span><p>A reduced experiment is labeled as one. A compute limit is reported. A result that differs is still a useful result.</p></div>
@@ -155,7 +160,7 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
     const version = navigationVersion.current;
     setBusy(true); setError(null);
     try { const value = await api<Run>(`/api/runs/${encodeURIComponent(run.id)}/approve`, { method: "POST", body: JSON.stringify({ claimId: run.plan?.claimId }) }); if (navigationVersion.current === version) { setRun(value); } }
-    catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not approve this experiment."); }
+    catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not continue this investigation."); }
     finally { if (navigationVersion.current === version) setBusy(false); }
   };
   const cancel = async () => {
@@ -171,7 +176,7 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
     const version = navigationVersion.current;
     setBusy(true); setError(null);
     try { const value = await api<Run>("/api/runs", { method: "POST", body: JSON.stringify({ retryFromId: run.id }) }); if (navigationVersion.current === version) selectRun(value); }
-    catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not prepare this protocol for review."); }
+    catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not restart this investigation."); }
     finally { if (navigationVersion.current === version) setBusy(false); }
   };
   const back = () => { navigationVersion.current += 1; setLoadingRun(false); setBusy(false); setRun(null); setError(null); window.history.replaceState(null, "", window.location.pathname); window.scrollTo({ top: 0, behavior: "smooth" }); };

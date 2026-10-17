@@ -1,10 +1,11 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./workspace.css";
+import "./demo.css";
 
 export const metadata: Metadata = {
   title: "Trace | Research deserves a second run",
-  description: "An evidence-first research agent. Read a paper, inspect its claims, and run a reproducible experiment in an isolated CreateOS sandbox.",
+  description: "A research agent that reads a paper, writes and runs a focused experiment, and repairs its code using real CreateOS Sandbox feedback.",
 };
 
 export const viewport: Viewport = { themeColor: "#0a0a0a", colorScheme: "dark" };
