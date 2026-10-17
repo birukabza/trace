@@ -1,46 +1,35 @@
-# Research workspace
+# Research experience
 
-The home page keeps its warm paper and orange sphere. The research interior
-uses the dark surfaces, restrained typography, rounded panels, and quieter
-navigation of the [Grok Bot reference](https://x.ai/bot).
+The home page and research flow share the same cream background, dark text,
+and burnt-orange accent. Processing shows a paper title, one animated orb,
+one status sentence, and Cancel. The interface follows the saved run status.
+It does not simulate progress percentages or invent intermediate work.
 
-The previous workspace repeated small labels and bordered sections without
-giving the experiment a clear reading order. The new hierarchy is the source,
-the hypothesis, the method, the scope boundaries, and an explicit approval.
-Completed runs put measurements and limitations ahead of raw process output.
-Failed runs open to their error logs.
+The UI uses [thinking-orbs](https://github.com/Jakubantalik/thinking-orbs)
+for reading, planning, queueing, execution, and review. Its canvas animations
+pause offscreen and in background tabs and respect reduced-motion preferences.
+A visible pause control lets people stop the animation. The landing page keeps
+its existing Shaders sphere.
 
-The source rail separates inspecting a claim from approving its protocol. A
-claim can be expanded to read its full text and original excerpt. On phones,
-source context opens on demand so it does not push the experiment below a long
-sidebar. Tabs support arrow keys, Home, and End. History supports search, and
-modal focus returns to its opening control.
+Review leads with a short experiment description and an explicit approval.
+The exact hypothesis, method, code, source quotations, and scope details open
+on demand. New model responses include a plain-language summary. Existing
+saved plans use their title and remain compatible with the new interface.
 
-## Shader use
+Results lead with the conclusion and its scope. Measurements, execution
+records, and research details are expandable. Recorded examples remain
+labeled. Failed and cancelled investigations keep their evidence and status.
+Provider configuration belongs in Settings. Hardware specifications are absent
+from the research flow.
 
-`ResearchField` composes FlowingGradient, ContourLines, and FilmGrain from
-`shaders/react`. Its contour field appears across the investigation views,
-planning, active execution, research history, and connection settings. Its
-animation speed follows whether a run is active. It is ambient artwork, not a
-plot of scientific measurements.
-
-Offscreen fields and hidden documents stop rendering. Reduced-motion settings,
-GPU unavailability, and the pause control use a static gradient fallback. The
-existing spherical shader remains specific to the home page.
+A persistent live region announces when a review, result, or stopped state
+replaces processing. Navigation still invalidates stale asynchronous responses.
+Approval and execution rules are unchanged.
 
 ## Verification
 
-The browser pass exercised existing live evidence, failed execution logs,
-history filtering and its empty state, modal focus, tab keyboard navigation,
-full claim/source expansion, and the review dock. A copied protocol was opened
-for approval and cancelled without running another experiment.
-
-At 390 px the source disclosure expanded and collapsed, and document width
-matched the viewport with no horizontal page overflow. Pausing the research
-field changed its rendered canvas count from one to zero. The desktop and
-mobile captures are kept in ignored `artifacts/`.
-
-The initialization request aborts during effect cleanup. Explicit navigation
-also invalidates earlier request results and clears the loading state. This
-prevents a delayed response from restoring the original investigation after
-the user opens another run or returns home.
+TypeScript, the server tests, and the production build pass. The local NumPy test remains skipped because NumPy is absent in WSL; the prior sandbox integration verified NumPy execution. Browser checks cover the pending review,
+code disclosure, existing result measurements, history, settings, and animation
+pause. A temporary preview rendered processing states without new model or
+sandbox calls. At 390 px, document and viewport widths matched. The preview
+route is removed before shipping. Captures stay in ignored artifacts.

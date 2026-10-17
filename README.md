@@ -22,12 +22,12 @@ Supabase authentication is deferred.
 ## Use the workspace
 
 1. Submit an arXiv paper URL or a public GitHub repository URL.
-2. Read the extracted claims, source evidence, and proposed experiment.
+2. Review the proposed experiment. Open the method, scope, or source details when needed.
 3. Inspect the Python code and approve the experiment.
-4. Follow execution progress and inspect stdout, stderr, and exit status.
+4. Follow the status, then open measurements and execution details in the result.
 5. Download the evidence report.
 
-If execution fails, inspect its logs and use **Review protocol again** to prepare
+If execution fails, inspect its logs and use **Review & retry** to prepare
 an unchanged protocol for a new approval. The failed run stays in the research log.
 This version does not automatically edit or repair generated code.
 

@@ -16,6 +16,7 @@ export interface ExperimentPlan {
   claimId: string;
   title: string;
   hypothesis: string;
+  summary?: string;
   method: string;
   dataset: string;
   metrics: string[];

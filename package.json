@@ -21,6 +21,7 @@
     "react": "latest",
     "react-dom": "latest",
     "shaders": "latest",
+    "thinking-orbs": "^0.3.2",
     "unpdf": "latest",
     "zod": "latest"
   },

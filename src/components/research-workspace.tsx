@@ -5,12 +5,11 @@ import { Activity, ArrowDown, ArrowRight, ArrowUpRight, BookOpen, Check, Chevron
 import type { Health, Run } from "@/lib/types";
 import { TraceMark } from "./trace-mark";
 import { ResearchShader } from "./research-shader";
-import { ResearchField } from "./research-field";
-import { RunWorkspace, ACTIVE_STATUSES, STATUS_LABELS, type WorkspaceTab } from "./run-workspace";
+import { RunWorkspace, ProcessView, ACTIVE_STATUSES, STATUS_LABELS } from "./run-workspace";
 
 const KMEANS_URL = "https://theory.stanford.edu/~sergei/papers/kMeansPP-soda.pdf";
 const ATTENTION_URL = "https://arxiv.org/abs/1706.03762";
-type Tab = WorkspaceTab;
+
 type ModalName = "settings" | "history" | null;
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,7 +43,7 @@ function Modal({ title, eyebrow, onClose, children }: { title: string; eyebrow: 
     return () => { document.removeEventListener("keydown", onKey); document.body.style.overflow = priorOverflow; previous?.focus(); };
   }, [onClose]);
   return <div className="modal-backdrop research-overlay" onClick={onClose}><div className="modal" ref={ref} role="dialog" aria-modal="true" aria-labelledby="modal-title" onClick={(event) => event.stopPropagation()}>
-    <div className="modal-field-visual"><ResearchField muted /></div>
+
     <div className="modal-header"><div><div className="eyebrow">{eyebrow}</div><h2 id="modal-title">{title}</h2></div><button onClick={onClose} aria-label="Close dialog"><X size={19} /></button></div>
     {children}
   </div></div>;
@@ -77,7 +76,7 @@ function Landing({ sourceUrl, setSourceUrl, repositoryUrl, setRepositoryUrl, onS
     <section className="how-section" id="how-it-works" aria-labelledby="how-title">
       <div className="section-heading"><div><div className="eyebrow">From claim to evidence</div><h2 id="how-title">Don’t take its word for it.<br />Follow the experiment.</h2></div><p>A successful script is only the beginning. Trace keeps the source, the method, and the measured outcome together.</p></div>
       <div className="steps-grid">
-        <article className="step-card"><span className="step-number">[01]</span><div className="step-graphic"><div className="paper-graphic"><i /><i /><i /><i /><i /></div></div><h3>Find a testable claim.</h3><p>The agent reads your source and identifies claims that your compute can actually test.</p></article>
+        <article className="step-card"><span className="step-number">[01]</span><div className="step-graphic"><div className="paper-graphic"><i /><i /><i /><i /><i /></div></div><h3>Find a testable claim.</h3><p>The agent reads your source and identifies claims we can put to the test.</p></article>
         <article className="step-card"><span className="step-number">[02]</span><div className="step-graphic execution-graphic"><span>&lt;/&gt;</span><ChevronRight size={12} /><span>run</span><ChevronRight size={12} /><span><Check size={13} /></span></div><h3>Review. Then run.</h3><p>Inspect the protocol and generated Python before execution in an isolated sandbox.</p></article>
         <article className="step-card"><span className="step-number">[03]</span><div className="step-graphic"><div className="evidence-graphic"><i /><i /><i /><i /></div></div><h3>Keep the paper trail.</h3><p>Compare reported and observed results, with logs, limitations, and an exportable report.</p></article>
       </div>
@@ -91,7 +90,7 @@ function EmptyState({ icon, title, description }: { icon: ReactNode; title: stri
 }
 
 function Connections({ health, onRefresh }: { health: Health | null; onRefresh: () => void }) {
-  return <><p>One model to plan. One sandbox to test. Your credentials stay on the server.</p><div className="connection-grid"><article className="connection-card"><div><Activity size={21} /><span className="connection-status"><span className={`status-dot ${health?.riverConfigured ? "ready" : ""}`} />{health?.riverConfigured ? "Configured" : "Not configured"}</span></div><h3>River</h3><p>{health?.model || "zai-org/GLM-5.3-Flash"}</p></article><article className="connection-card"><div><Cpu size={21} /><span className="connection-status"><span className={`status-dot ${health?.createosConfigured ? "ready" : ""}`} />{health?.createosConfigured ? "Configured" : "Not configured"}</span></div><h3>CreateOS Sandbox</h3><p>EU region · 2 vCPU · 4 GB RAM</p></article></div><div className="integration-row"><div><strong>Connected through Stripe Projects</strong><p>Service provisioning and credentials managed by the CLI.</p></div><a className="text-button" href="https://dashboard.stripe.com/projects" target="_blank" rel="noreferrer">Manage<ArrowUpRight size={14} /></a></div><div className="settings-note">Configured means the key is present. Access and available credits are checked when a real request runs. River reads <span className="config-key">RIVER_API_KEY</span> from your server environment, with local setup in <span className="config-key">.env.local</span>.</div><button className="secondary-button" onClick={onRefresh}><Activity size={14} />Refresh configuration</button></>;
+  return <><p>One model to plan. One sandbox to test. Your credentials stay on the server.</p><div className="connection-grid"><article className="connection-card"><div><Activity size={21} /><span className="connection-status"><span className={`status-dot ${health?.riverConfigured ? "ready" : ""}`} />{health?.riverConfigured ? "Configured" : "Not configured"}</span></div><h3>River</h3><p>{health?.model || "zai-org/GLM-5.3-Flash"}</p></article><article className="connection-card"><div><Cpu size={21} /><span className="connection-status"><span className={`status-dot ${health?.createosConfigured ? "ready" : ""}`} />{health?.createosConfigured ? "Configured" : "Not configured"}</span></div><h3>CreateOS Sandbox</h3><p>Private experiment execution</p></article></div><div className="integration-row"><div><strong>Connected through Stripe Projects</strong><p>Service provisioning and credentials managed by the CLI.</p></div><a className="text-button" href="https://dashboard.stripe.com/projects" target="_blank" rel="noreferrer">Manage<ArrowUpRight size={14} /></a></div><div className="settings-note">Configured means the key is present. Access and available credits are checked when a real request runs. River reads <span className="config-key">RIVER_API_KEY</span> from your server environment, with local setup in <span className="config-key">.env.local</span>.</div><button className="secondary-button" onClick={onRefresh}><Activity size={14} />Refresh configuration</button></>;
 }
 
 export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
@@ -108,12 +107,12 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
   const [historyQuery, setHistoryQuery] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [modal, setModal] = useState<ModalName>(null);
-  const [tab, setTab] = useState<Tab>("protocol");
+
   const closeModal = useCallback(() => setModal(null), []);
-  const selectRun = useCallback((value: Run, selectedTab: Tab = "protocol") => {
+  const selectRun = useCallback((value: Run) => {
     navigationVersion.current += 1;
     setLoadingRun(false); setBusy(false);
-    setRun(value); setTab(selectedTab); setError(null); setModal(null);
+    setRun(value); setError(null); setModal(null);
     window.history.replaceState(null, "", `?run=${encodeURIComponent(value.id)}`);
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, []);
@@ -127,7 +126,7 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
     if (id) {
       setBusy(true); setLoadingRun(true);
       api<Run>(`/api/runs/${encodeURIComponent(id)}`, { signal: controller.signal })
-        .then(value => { if (current && navigationVersion.current === version) selectRun(value, value.result || value.attempts.length ? "evidence" : "protocol"); })
+        .then(value => { if (current && navigationVersion.current === version) selectRun(value); })
         .catch(reason => { if (current && navigationVersion.current === version) setError(reason.message); })
         .finally(() => { if (current && navigationVersion.current === version) { setBusy(false); setLoadingRun(false); } });
     }
@@ -147,7 +146,7 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
   const startRun = async (mode: "live" | "example") => {
     const version = navigationVersion.current;
     setBusy(true); setError(null);
-    try { const value = await api<Run>("/api/runs", { method: "POST", body: JSON.stringify({ sourceUrl: mode === "example" ? KMEANS_URL : sourceUrl, ...(repositoryUrl && mode === "live" ? { repositoryUrl } : {}), mode }) }); if (navigationVersion.current === version) selectRun(value, mode === "example" ? "evidence" : "protocol"); }
+    try { const value = await api<Run>("/api/runs", { method: "POST", body: JSON.stringify({ sourceUrl: mode === "example" ? KMEANS_URL : sourceUrl, ...(repositoryUrl && mode === "live" ? { repositoryUrl } : {}), mode }) }); if (navigationVersion.current === version) selectRun(value); }
     catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not start the investigation."); }
     finally { if (navigationVersion.current === version) setBusy(false); }
   };
@@ -156,7 +155,7 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
     if (!run) return;
     const version = navigationVersion.current;
     setBusy(true); setError(null);
-    try { const value = await api<Run>(`/api/runs/${encodeURIComponent(run.id)}/approve`, { method: "POST", body: JSON.stringify({ claimId: run.plan?.claimId }) }); if (navigationVersion.current === version) { setRun(value); setTab("activity"); } }
+    try { const value = await api<Run>(`/api/runs/${encodeURIComponent(run.id)}/approve`, { method: "POST", body: JSON.stringify({ claimId: run.plan?.claimId }) }); if (navigationVersion.current === version) { setRun(value); } }
     catch (reason) { if (navigationVersion.current === version) setError(reason instanceof Error ? reason.message : "Could not approve this experiment."); }
     finally { if (navigationVersion.current === version) setBusy(false); }
   };
@@ -183,12 +182,13 @@ export function ResearchWorkspace({ initialRunId }: { initialRunId?: string }) {
     finally { setLoadingHistory(false); }
   };
   const matchingRuns = runs.filter(item => `${item.paper?.title || item.title} ${item.sourceUrl}`.toLowerCase().includes(historyQuery.toLowerCase()));
-  return <div className={`app-shell ${run || loadingRun ? "workspace-shell" : ""}`}>
+  return <div className={`app-shell ${run || loadingRun || busy ? "workspace-shell" : ""}`}>
+    <span className="sr-only" role="status" aria-live="polite" aria-atomic="true">{run && !ACTIVE_STATUSES.includes(run.status) ? STATUS_LABELS[run.status] : ""}</span>
     <header className="topbar"><button className="brand" onClick={back} aria-label="Trace home"><TraceMark /><span className="wordmark">trace</span><span className="brand-divider" /><span className="brand-caption">Research,<br />with receipts.</span></button><nav className="nav" aria-label="Main navigation"><button className="nav-active" onClick={back}>Workspace</button><button onClick={() => void showHistory()}><History size={12} />Runs</button><a href={run ? "/#how-it-works" : "#how-it-works"} className="nav-secondary">How it works<ArrowDown size={11} /></a><button className="icon-button" onClick={() => { setModal("settings"); void refreshHealth(); }} aria-label="Connection settings"><Settings2 size={15} /></button></nav></header>
     {error && <div className="error-notice" role="alert" style={{ marginTop: 20 }}><Info size={16} /><p>{error}</p><button onClick={() => setError(null)} aria-label="Dismiss error"><X size={14} /></button></div>}
-    {loadingRun ? <main className="workspace-loading"><ResearchField active /><span className="bench-kicker">Your research workspace</span><h1>Opening the investigation.</h1><p><Loader2 className="spin" size={16} />Restoring the protocol and evidence.</p></main> : run ? <RunWorkspace key={run.id} run={run} tab={tab} setTab={setTab} onBack={back} onApprove={() => void approve()} onCancel={() => void cancel()} onRetry={() => void retry()} busy={busy} /> : <main><Landing sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} repositoryUrl={repositoryUrl} setRepositoryUrl={setRepositoryUrl} onSubmit={submit} onExample={() => void startRun("example")} busy={busy} health={health} /></main>}
+    {loadingRun || (busy && !run) ? <main className="workspace"><ProcessView /></main> : run ? <RunWorkspace key={run.id} run={run} onBack={back} onApprove={() => void approve()} onCancel={() => void cancel()} onRetry={() => void retry()} busy={busy} /> : <main><Landing sourceUrl={sourceUrl} setSourceUrl={setSourceUrl} repositoryUrl={repositoryUrl} setRepositoryUrl={setRepositoryUrl} onSubmit={submit} onExample={() => void startRun("example")} busy={busy} health={health} /></main>}
     <footer className="footer"><span className="mono">Built for the questions that deserve another look.</span><div className="footer-links"><a href="https://projects.dev" target="_blank" rel="noreferrer">Stripe Projects <ArrowUpRight size={9} style={{ display: "inline" }} /></a><a href="https://createos.sh" target="_blank" rel="noreferrer">CreateOS Sandbox <ArrowUpRight size={9} style={{ display: "inline" }} /></a></div></footer>
     {modal === "settings" && <Modal title="Your research setup." eyebrow="Connections" onClose={closeModal}><Connections health={health} onRefresh={() => void refreshHealth()} /></Modal>}
-    {modal === "history" && <Modal title="Pick up a question." eyebrow="Your research library" onClose={closeModal}><p>Every protocol, attempt, and result stays with its investigation.</p><label className="history-search"><Search size={17} /><input aria-label="Search research history" data-autofocus placeholder="Find a paper or investigation" value={historyQuery} onChange={event => setHistoryQuery(event.target.value)} /></label>{loadingHistory ? <div className="page-loading"><Loader2 className="spin" size={16} />Opening the research log</div> : matchingRuns.length ? <div className="history-list">{matchingRuns.map(item => <button key={item.id} className="history-item" onClick={() => selectRun(item, item.result || item.attempts.length ? "evidence" : "protocol")}><span className="history-icon"><FlaskConical size={17} /></span><div><h3>{item.paper?.title || item.title || "Untitled investigation"}</h3><div className="history-meta"><span><span className={`status-dot ${["failed", "blocked"].includes(item.status) ? "warning" : ACTIVE_STATUSES.includes(item.status) ? "running" : item.status === "cancelled" ? "" : "ready"}`} />{item.mode === "example" ? "Recorded example" : STATUS_LABELS[item.status]}</span><span>{new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}</span></div></div><ArrowUpRight size={16} /></button>)}</div> : <EmptyState icon={<BookOpen size={28} strokeWidth={1} />} title={historyQuery ? "No matching investigations." : "A fresh research log."} description={historyQuery ? "Try another paper title or source URL." : "Start with a source or open the recorded example."} />}</Modal>}
+    {modal === "history" && <Modal title="Pick up a question." eyebrow="Your research library" onClose={closeModal}><p>Every protocol, attempt, and result stays with its investigation.</p><label className="history-search"><Search size={17} /><input aria-label="Search research history" data-autofocus placeholder="Find a paper or investigation" value={historyQuery} onChange={event => setHistoryQuery(event.target.value)} /></label>{loadingHistory ? <div className="page-loading"><Loader2 className="spin" size={16} />Opening the research log</div> : matchingRuns.length ? <div className="history-list">{matchingRuns.map(item => <button key={item.id} className="history-item" onClick={() => selectRun(item)}><span className="history-icon"><FlaskConical size={17} /></span><div><h3>{item.paper?.title || item.title || "Untitled investigation"}</h3><div className="history-meta"><span><span className={`status-dot ${["failed", "blocked"].includes(item.status) ? "warning" : ACTIVE_STATUSES.includes(item.status) ? "running" : item.status === "cancelled" ? "" : "ready"}`} />{item.mode === "example" ? "Recorded example" : STATUS_LABELS[item.status]}</span><span>{new Date(item.createdAt).toLocaleDateString([], { month: "short", day: "numeric" })}</span></div></div><ArrowUpRight size={16} /></button>)}</div> : <EmptyState icon={<BookOpen size={28} strokeWidth={1} />} title={historyQuery ? "No matching investigations." : "A fresh research log."} description={historyQuery ? "Try another paper title or source URL." : "Start with a source or open the recorded example."} />}</Modal>}
   </div>;
 }

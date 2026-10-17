@@ -1,17 +1,18 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
-import { Activity, ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, BookOpen, Check, CheckCheck, ChevronDown, Clock3, Code2, Copy, Cpu, ExternalLink, FileText, FlaskConical, GitBranch, Info, Loader2, Play, ShieldCheck, Square, Terminal, X } from "lucide-react";
+import { ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Check, CheckCheck, ChevronDown, Code2, Copy, Info, Loader2, ShieldCheck, X } from "lucide-react";
 import type { Run, RunStatus } from "@/lib/types";
-import { ResearchField } from "./research-field";
+import { ProcessOrb } from "./process-orb";
+import type { OrbState } from "thinking-orbs";
 
 export const ACTIVE_STATUSES: RunStatus[] = ["analyzing", "queued", "running"];
 export const STATUS_LABELS: Record<RunStatus, string> = {
   analyzing: "Reading source", awaiting_approval: "Ready for your review", queued: "Experiment queued", running: "Experiment running",
   completed: "Experiment complete", blocked: "Experiment blocked", failed: "Run failed", cancelled: "Run cancelled",
 };
-const SCOPE_LABELS = { component_check: "Component check", reduced_experiment: "Reduced experiment", reproduction: "Reproduction" };
-export type WorkspaceTab = "protocol" | "activity" | "code" | "evidence";
+const SCOPE_LABELS = { component_check: "Focused check", reduced_experiment: "Smaller-scale experiment", reproduction: "Full reproduction" };
+
 const time = (value: string) => new Date(value).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 function EmptyState({ icon, title, children }: { icon: ReactNode; title: string; children: ReactNode }) {
@@ -20,18 +21,18 @@ function EmptyState({ icon, title, children }: { icon: ReactNode; title: string;
 
 function Protocol({ run, onApprove, busy }: { run: Run; onApprove: () => void; busy: boolean }) {
   const plan = run.plan;
-  if (!plan) return <><div className="planning-state"><div className="planning-visual"><ResearchField active={run.status === "analyzing"} /></div><span className="bench-kicker">{run.status === "analyzing" ? "The investigation has started" : "Investigation paused"}</span><h2>{run.status === "analyzing" ? "Finding a question worth testing." : "No executable protocol yet."}</h2><p>{run.status === "analyzing" ? "Reading the source, checking the method, and finding an experiment that fits your sandbox. You will review the code before it runs." : run.error || "Open the activity log to see what happened."}</p>{run.status === "analyzing" && <div className="planning-footnote"><Loader2 size={14} className="spin" />Planning with River · no code has run</div>}</div><ActivityLog run={run} /></>;
-  return <>
-    <div className="content-heading"><div><span className="bench-kicker">01 / The plan</span><h2>A small, testable question.</h2><p>Review what the agent proposes to measure.</p></div><span className="scope-tag">{SCOPE_LABELS[plan.scope]}</span></div>
-    <section className="protocol-hypothesis"><span className="bench-kicker">Hypothesis</span><h3>{plan.hypothesis}</h3></section>
-    <div className="protocol-facts"><div><BookOpen size={17} /><span>Data</span><p>{plan.dataset}</p></div><div><Cpu size={17} /><span>Environment</span><p>{plan.dependencies.join(" · ") || "Python standard library"}<small>Up to 60 seconds · 2 vCPU · 4 GB</small></p></div></div>
-    <section className="method-section"><h3>The method</h3><p>{plan.method}</p></section>
-    <section className="method-section"><h3>What gets measured</h3><ol className="measurement-list">{plan.metrics.map((metric, index) => <li key={metric}><span>{String(index + 1).padStart(2, "0")}</span>{metric}</li>)}</ol></section>
-    <section className="protocol-boundaries"><div><ShieldCheck size={16} /><h3>Keep the scope honest.</h3></div><p>{plan.scope === "reproduction" ? "This protocol aims to match the source experiment. The report must document deviations." : "This checks a bounded part of the paper. It does not establish reproduction of the full benchmark."}</p><ul>{plan.limitations.map(value => <li key={value}>{value}</li>)}</ul></section>
-    {run.status === "awaiting_approval" ? <div className="review-dock"><div><span className="review-indicator" /><div><strong>Ready when you are.</strong><p>Review the Code tab, then approve this protocol.</p></div></div><button className="primary-button" onClick={onApprove} disabled={busy}>{busy ? "Starting experiment" : "Approve & run"}{busy ? <Loader2 size={16} className="spin" /> : <ArrowUpRight size={17} />}</button></div> : <p className="protocol-status"><Info size={14} />{run.mode === "example" ? "Recorded protocol. This example will not start a new experiment." : `This protocol is ${STATUS_LABELS[run.status].toLowerCase()}. Inspect the Evidence tab for its execution record.`}</p>}
-  </>;
+  if (!plan) return null;
+  return <div className="review-sheet stage-enter"><div className="review-orb"><ProcessOrb state="breathing" label="Ready for your review" /></div>
+    <span className="quiet-label">Your experiment</span>
+    <h1>A question we can test.</h1>
+    <p className="review-question">{plan.summary || plan.title}</p>
+    <div className="scope-note"><span />{SCOPE_LABELS[plan.scope]}. {plan.scope === "reproduction" ? "We will document any differences from the paper." : "This tests part of the paper, rather than its full benchmark."}</div>
+    <details className="quiet-disclosure"><summary>How we will test it<ChevronDown size={15} /></summary><div className="disclosure-body"><h3>The precise question</h3><p>{plan.hypothesis}</p><h3>Method</h3><p>{plan.method}</p><h3>Data</h3><p>{plan.dataset}</p><h3>Measurements</h3><ul>{plan.metrics.map(metric => <li key={metric}>{metric}</li>)}</ul></div></details>
+    <details className="quiet-disclosure"><summary>Review the code<ChevronDown size={15} /></summary><div className="disclosure-body"><CodePanel run={run} /></div></details>
+    {plan.limitations.length > 0 && <details className="quiet-disclosure"><summary>What this can tell us<ChevronDown size={15} /></summary><div className="disclosure-body"><ul>{plan.limitations.map(value => <li key={value}>{value}</li>)}</ul></div></details>}
+    {run.status === "awaiting_approval" && <div className="review-action"><button className="primary-button accent" onClick={onApprove} disabled={busy}>{busy ? "Starting experiment" : "Approve & run"}<ArrowUpRight size={16} /></button><p>Nothing runs until you approve.</p></div>}
+  </div>;
 }
-
 function ActivityLog({ run }: { run: Run }) {
   return <ol className="bench-timeline">{run.events.map((event, index) => {
     const pending = index === run.events.length - 1 && ACTIVE_STATUSES.includes(run.status);
@@ -70,37 +71,60 @@ function Evidence({ run }: { run: Run }) {
   const [attemptIndex, setAttemptIndex] = useState(0);
   const result = run.result;
   const attempt = run.attempts[attemptIndex];
-  if (!result && !attempt) return <EmptyState icon={<FlaskConical size={25} />} title="Evidence takes an experiment.">{ACTIVE_STATUSES.includes(run.status) ? "Your experiment is in progress. Measurements and logs will appear here." : run.status === "awaiting_approval" ? "Review the protocol and code, then approve a run to collect measurements. Nothing has executed yet." : "This run has no execution measurements. Open Activity to inspect its status."}</EmptyState>;
-  const labels = { matched: "Matched within protocol", partial: "Partial verification", differed: "Measurements differed", blocked: "Experiment blocked" };
-  return <>
-    {result && <><div className="result-head"><div className="result-topline"><span className="bench-kicker">03 / The evidence</span><span className="scope-tag"><ShieldCheck size={13} />{labels[result.verdict]}</span></div><h2>{run.mode === "example" ? "Recorded measurements." : "Execution complete."}</h2><p>{result.summary}</p>{attempt && <div className="result-statline"><span><span className="status-dot ready" />Exit {attempt.exitCode}</span><span><Clock3 size={13} />{(attempt.durationMs / 1000).toFixed(1)}s command time</span><span><Terminal size={13} />{run.attempts.length} execution record</span></div>}</div><div className="section-intro"><h3>Measured, not inferred.</h3><p>Values parsed from the experiment’s captured output.</p></div><ExperimentMeasurements metrics={result.metrics} />{result.limitations.length > 0 && <section className="protocol-boundaries"><div><Info size={16} /><h3>What this does not establish</h3></div><ul>{result.limitations.map(value => <li key={value}>{value}</li>)}</ul></section>}</>}
-    <div className="report-download"><div><FileText size={20} /><div><strong>Take the evidence with you.</strong><p>Protocol, code, source references, and execution logs.</p></div></div><a className="secondary-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report<ArrowDownToLine size={15} /></a></div>
-    {attempt && <details className="execution-details" open={attempt.exitCode !== 0}><summary><span><Terminal size={16} />Execution record <span className={`exit-tag ${attempt.exitCode === 0 ? "" : "exit-warning"}`}>Exit {attempt.exitCode}</span></span><ChevronDown size={16} /></summary><div className="execution-body"><div className="attempt-selector">{run.attempts.map((item, index) => <button key={item.number} className={index === attemptIndex ? "active" : ""} onClick={() => setAttemptIndex(index)}>Attempt {item.number}</button>)}</div><p className="execution-duration">{(attempt.durationMs / 1000).toFixed(1)}s · Unedited sandbox output</p><div className="terminal-label">stdout</div><pre className="terminal-output">{attempt.stdout || "(no output)"}</pre><div className="terminal-label">stderr</div><pre className={`terminal-output ${attempt.stderr ? "terminal-error" : ""}`}>{attempt.stderr || "(no errors)"}</pre><details className="executed-code"><summary>Inspect submitted Python</summary><pre className="terminal-output">{attempt.code}</pre></details></div></details>}
-  </>;
+  const labels = { matched: "Matched within this experiment", partial: "Part of the paper tested", differed: "Results differed", blocked: "Experiment stopped" };
+  return <div className="evidence-sheet stage-enter">
+    <div className={`outcome-mark ${result ? "" : "outcome-warning"}`}>{result ? <Check size={20} /> : <Info size={20} />}</div>
+    <span className="quiet-label">{result ? labels[result.verdict] : "Experiment stopped"}</span>
+    <h1>{result ? "Here is what we found." : "The experiment needs another look."}</h1>
+    <p className="result-summary">{result?.summary || "The experiment did not finish successfully. Its output is saved below."}</p>
+    {result && <>
+      <details className="quiet-disclosure"><summary>See the measurements<ChevronDown size={15} /></summary><div className="disclosure-body"><ExperimentMeasurements metrics={result.metrics} /></div></details>
+      {result.limitations.length > 0 && <div className="result-caveat"><span>Keep in mind</span><p>{result.limitations[0]}</p>{result.limitations.length > 1 && <details><summary>More about the scope</summary><ul>{result.limitations.slice(1).map(value => <li key={value}>{value}</li>)}</ul></details>}</div>}
+    </>}
+    <div className="report-download"><a className="primary-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report<ArrowDownToLine size={15} /></a></div>
+    {attempt && <details className="quiet-disclosure execution-details"><summary>Execution record<ChevronDown size={15} /></summary><div className="disclosure-body"><div className="attempt-selector">{run.attempts.map((item, index) => <button key={item.number} className={index === attemptIndex ? "active" : ""} onClick={() => setAttemptIndex(index)}>Attempt {item.number}</button>)}</div><p className="execution-duration">Exit {attempt.exitCode} / {(attempt.durationMs / 1000).toFixed(1)}s</p><h3>Output</h3><pre className="terminal-output">{attempt.stdout || "No output"}</pre><h3>Errors</h3><pre className="terminal-output">{attempt.stderr || "No errors"}</pre><details><summary>Submitted code</summary><pre className="terminal-output">{attempt.code}</pre></details></div></details>}
+  </div>;
+}
+type ProcessPhase = { title: string; description: string; orb: OrbState };
+function processPhase(run: Run): ProcessPhase {
+  if (run.status === "queued") return { title: "Your experiment is next.", description: "We will begin in a moment.", orb: "connecting" };
+  if (run.status === "running") {
+    return { title: "Putting the claim to the test.", description: "Running the experiment you approved.", orb: "working" };
+  }
+  return run.events.some(event => event.stage === "source")
+    ? { title: "Finding what we can verify.", description: "Shaping a clear experiment from the paper's claims.", orb: "solving" }
+    : { title: "Getting to know your paper.", description: "Reading the source and following its ideas.", orb: "searching" };
 }
 
-export function RunWorkspace({ run, tab, setTab, onBack, onApprove, onCancel, onRetry, busy }: {
-  run: Run; tab: WorkspaceTab; setTab: (tab: WorkspaceTab) => void; onBack: () => void; onApprove: () => void; onCancel: () => void; onRetry: () => void; busy: boolean;
+export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () => void; busy?: boolean }) {
+  const phase = run ? processPhase(run) : { title: "Opening your research.", description: "Everything will be here in a moment.", orb: "connecting" as const };
+  const key = `${run?.status || "opening"}-${phase.orb}`;
+  return <section className="process-view stage-enter" aria-label="Research in progress">
+    {run && <p className="process-paper" title={run.paper?.title || run.sourceUrl}>{run.paper?.title || (run.sourceUrl.includes("github.com") ? "Your repository" : "Your paper")}</p>}
+    <ProcessOrb state={phase.orb} label={phase.title} />
+    <div key={key} className="process-copy stage-enter" role="status" aria-live="polite" aria-atomic="true"><h1>{phase.title}</h1><p>{phase.description}</p></div>
+    {onCancel && <button className="text-button process-cancel" onClick={onCancel} disabled={busy}>Cancel</button>}
+  </section>;
+}
+
+export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }: {
+  run: Run; onBack: () => void; onApprove: () => void; onCancel: () => void; onRetry: () => void; busy: boolean;
 }) {
-  const [inspectedClaim, setInspectedClaim] = useState<string | null>(null);
-  const [sourceExpanded, setSourceExpanded] = useState(false);
-  const selectedClaim = run.claims.find(claim => claim.id === (inspectedClaim || run.plan?.claimId)) || run.claims[0];
   const active = ACTIVE_STATUSES.includes(run.status);
-  const warning = ["failed", "blocked"].includes(run.status);
-  const currentStep = run.status === "analyzing" || !run.plan ? 0 : run.status === "awaiting_approval" ? 1 : active ? 2 : run.attempts.length || run.result ? 3 : 1;
-  return <main className="workspace">
-    <div className="workspace-topline"><button className="text-button" onClick={onBack}><ArrowLeft size={15} />All research</button><span className="run-identifier">INVESTIGATION / {run.id.slice(-8)}</span></div>
-    <header className="investigation-header"><div className="investigation-copy"><span className="bench-kicker">{run.mode === "example" ? "Recorded investigation" : "Your research workspace"}</span><h1>{run.paper?.title || run.title || "Reading your research."}</h1><div className="investigation-meta"><span className={`run-status ${warning ? "is-warning" : ""}`}><span className={`status-dot ${active ? "running" : warning ? "warning" : run.status === "cancelled" ? "" : "ready"}`} />{run.mode === "example" ? "Recorded example" : STATUS_LABELS[run.status]}</span>{run.plan && <span>{SCOPE_LABELS[run.plan.scope]}</span>}<span>Started {time(run.createdAt)}</span></div></div><div className="investigation-art"><ResearchField active={active} /><span className="field-caption">A question. An experiment. A paper trail.</span></div></header>
-    <div className="journey-bar"><ol aria-label="Experiment progress">{["Read source", "Review protocol", "Run experiment", "Inspect evidence"].map((label, index) => <li key={label} className={index < currentStep ? "step-done" : index === currentStep ? "step-current" : ""} aria-current={index === currentStep ? "step" : undefined}><span>{index < currentStep ? <Check size={12} /> : `0${index + 1}`}</span>{label}</li>)}</ol>{(active || run.status === "awaiting_approval") && <button className="text-button cancel-run" onClick={onCancel} disabled={busy}><Square size={11} />Cancel run</button>}</div>
-    {run.mode === "example" && <div className="recorded-notice"><Info size={16} /><p>Recorded example. These are prior synthetic measurements. Opening this view makes no model or sandbox request.</p></div>}
-    {run.error && <div className="error-notice" role="status"><Info size={17} /><p>{run.error}</p></div>}
-    {run.mode === "live" && run.plan && warning && <div className="retry-protocol"><p>The original evidence is preserved. Review the unchanged protocol before a new execution.</p><button className="secondary-button" onClick={onRetry} disabled={busy}>Review protocol again<ArrowRight size={14} /></button></div>}
-    <div className="workspace-grid"><aside className={`source-sidebar ${sourceExpanded ? "source-expanded" : ""}`} aria-label="Source and claims"><button className="mobile-source-toggle" aria-expanded={sourceExpanded} aria-controls="source-context" onClick={() => setSourceExpanded(value => !value)}><FileText size={16} /><span>Source &amp; claims<small>{run.claims.length} claims extracted</small></span><ChevronDown size={16} /></button><div className="source-sidebar-content" id="source-context"><div className="source-document"><span className="source-document-icon"><FileText size={19} /></span><span className="bench-kicker">Source material</span><h2>{run.paper?.title || run.title}</h2><a className="source-link" href={run.sourceUrl} target="_blank" rel="noreferrer">Open original source<ArrowUpRight size={14} /></a>{run.repositoryUrl && <a className="source-link" href={run.repositoryUrl} target="_blank" rel="noreferrer"><GitBranch size={13} />Author repository<ExternalLink size={11} /></a>}</div><div className="sidebar-divider" /><div className="sidebar-label">Extracted claims<span>{String(run.claims.length).padStart(2, "0")}</span></div><div className="claims-list">{run.claims.map((claim, index) => <button key={claim.id} className={`claim-option ${claim.id === selectedClaim?.id ? "selected" : ""}`} aria-pressed={claim.id === selectedClaim?.id} onClick={() => setInspectedClaim(claim.id)}><span className="claim-index"><span>Claim {String(index + 1).padStart(2, "0")}</span>{claim.id === run.plan?.claimId && <span className="planned-claim">In protocol</span>}</span><span className="claim-preview">{claim.text}</span></button>)}</div>{!run.claims.length && <p className="claim-detail">Claims appear here once the source has been analyzed.</p>}{selectedClaim && <div className="claim-context"><span className={`feasibility-label ${selectedClaim.feasible ? "" : "not-feasible"}`}>{selectedClaim.feasible ? <Check size={12} /> : <Info size={12} />}{selectedClaim.feasible ? "CPU check proposed" : "Outside this run’s resources"}</span><p>{selectedClaim.reason}</p>{selectedClaim.id !== run.plan?.claimId && run.plan && <p className="claim-inspection-note">You are inspecting a source claim. The protocol remains attached to Claim {String(run.claims.findIndex(claim => claim.id === run.plan?.claimId) + 1).padStart(2, "0")}.</p>}{selectedClaim.evidenceQuote && <details className="source-evidence" key={selectedClaim.id}><summary>Read claim &amp; source<ChevronDown size={14} /></summary><p className="full-claim">{selectedClaim.text}</p><blockquote>{selectedClaim.evidenceQuote}</blockquote><cite>{selectedClaim.sourceLocation}</cite></details>}</div>}<div className="sandbox-card"><span><Cpu size={16} />CreateOS Sandbox</span><p>EU region <i /> 2 vCPU <i /> 4 GB RAM</p><small>One approved experiment at a time.</small></div></div></aside>
-    <section className="workspace-main" aria-label="Experiment details"><div className="workspace-tabs" role="tablist" aria-label="Experiment views">{([{ id: "protocol", label: "Protocol", icon: <FlaskConical size={15} /> }, { id: "activity", label: "Activity", icon: <Activity size={15} /> }, { id: "code", label: "Code", icon: <Code2 size={15} /> }, { id: "evidence", label: "Evidence", icon: <CheckCheck size={15} /> }] as const).map(item => <button key={item.id} role="tab" id={`tab-${item.id}`} aria-controls={`panel-${item.id}`} aria-selected={tab === item.id} tabIndex={tab === item.id ? 0 : -1} onKeyDown={event => { const ids: WorkspaceTab[] = ["protocol", "activity", "code", "evidence"]; const index = ids.indexOf(tab); const next = event.key === "ArrowRight" ? ids[(index + 1) % ids.length] : event.key === "ArrowLeft" ? ids[(index + ids.length - 1) % ids.length] : event.key === "Home" ? ids[0] : event.key === "End" ? ids[ids.length - 1] : null; if (next) { event.preventDefault(); setTab(next); document.getElementById(`tab-${next}`)?.focus(); } }} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}>{item.icon}{item.label}{item.id === "activity" && active && <span className="activity-pulse" />}</button>)}</div><div className="workspace-content" role="tabpanel" tabIndex={0} aria-labelledby={`tab-${tab}`} id={`panel-${tab}`}>
-      {tab === "protocol" && <Protocol run={run} onApprove={onApprove} busy={busy} />}
-      {tab === "activity" && <><div className="content-heading"><div><span className="bench-kicker">The research log</span><h2>Follow the investigation.</h2><p>Source reads, approvals, and sandbox output in one timeline.</p></div><span className="log-count">{run.events.length} events</span></div>{active && <div className="live-activity"><ResearchField active /><div><Loader2 size={17} className="spin" /><strong>{STATUS_LABELS[run.status]}</strong><p>Your run continues in the background.</p></div></div>}<ActivityLog run={run} /></>}
-      {tab === "code" && <CodePanel key={run.id} run={run} />}
-      {tab === "evidence" && <Evidence key={run.id} run={run} />}
-    </div></section></div>
+  const failed = ["failed", "blocked"].includes(run.status);
+  return <main className={`workspace ${active ? "is-processing" : ""}`}>
+    <div className="workspace-topline"><button className="text-button" onClick={onBack}><ArrowLeft size={14} />New research</button>{!active && <a className="text-button" href={run.sourceUrl} target="_blank" rel="noreferrer">Read paper<ArrowUpRight size={13} /></a>}</div>
+    {active ? <ProcessView run={run} onCancel={onCancel} busy={busy} /> : <div className="research-sheet stage-enter">
+      <p className="paper-byline">{run.paper?.title || run.title}</p>
+      {run.mode === "example" && <p className="example-note">Recorded example. These are measurements from a previous experiment.</p>}
+      {run.status === "awaiting_approval" ? <><Protocol run={run} onApprove={onApprove} busy={busy} /><button className="text-button review-cancel" onClick={onCancel} disabled={busy}>Cancel experiment</button></> : run.result || run.attempts.length ? <Evidence run={run} /> : <div className="outcome-empty"><ProcessOrb state={failed ? "shaping" : "breathing"} label={failed ? "Experiment stopped" : "Research paused"} still /><h1>{failed ? "We could not finish this one." : "You stopped this investigation."}</h1><p>{failed ? "No result is available. The details below explain where it stopped." : "You can start again whenever you are ready."}</p><button className="secondary-button" onClick={onBack}>Start a new investigation<ArrowRight size={14} /></button></div>}
+      {failed && run.plan && <div className="retry-protocol"><p>You can review the same experiment and try again.</p><button className="secondary-button" onClick={onRetry} disabled={busy}>Review & retry<ArrowRight size={14} /></button></div>}
+      <details className="quiet-disclosure research-details"><summary>Research details<ChevronDown size={15} /></summary><div className="disclosure-body">
+        {run.error && <p className="detail-error">{run.error}</p>}
+        {run.status !== "awaiting_approval" && run.plan && <details className="quiet-disclosure"><summary>The experiment<ChevronDown size={14} /></summary><Protocol run={run} onApprove={onApprove} busy={busy} /></details>}
+        {run.claims.length > 0 && <details className="quiet-disclosure"><summary>Claims & sources<ChevronDown size={14} /></summary><div className="disclosure-body">{run.claims.map(claim => <article className="source-claim" key={claim.id}><p>{claim.text}</p>{claim.evidenceQuote && <blockquote>{claim.evidenceQuote}<cite>{claim.sourceLocation}</cite></blockquote>}</article>)}</div></details>}
+        <details className="quiet-disclosure"><summary>Activity<ChevronDown size={14} /></summary><div className="disclosure-body"><ActivityLog run={run} /></div></details>
+      </div></details>
+    </div>}
   </main>;
 }
