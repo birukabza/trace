@@ -8,7 +8,7 @@ import { requireSameOrigin } from "../src/lib/server/http";
 import { RunStore, transition } from "../src/lib/server/store";
 import { observedMetrics, markdownReport, validateEvidenceQuotes, prepareRetry, recoverInterruptedRuns } from "../src/lib/server/runs";
 import { holdExecutionLease } from "../src/lib/server/sandbox";
-import { analysisSchema, resolveEvidenceClaims, sourceExcerpts } from "../src/lib/server/river";
+import { analysisSchema, ModelResponseError, parseModelResponse, resolveEvidenceClaims, sourceExcerpts } from "../src/lib/server/river";
 import type { Run } from "../src/lib/types";
 
 function run(): Run {
@@ -160,4 +160,24 @@ test("model output needs a bounded plan and explicit limitations", () => {
   const claim = { id: "one", text: "claim", sourceLocation: "Section 3", evidenceId: "paper:0", feasible: false, reason: "GPU required" };
   assert.equal(analysisSchema.safeParse({ title: "Example", claims: [claim], plan: null, blockedReason: "GPU required" }).success, true);
   assert.equal(analysisSchema.safeParse({ title: "Example", claims: [claim, claim], plan: null, blockedReason: "GPU required" }).success, false);
+});
+
+test("model diagnostics distinguish malformed JSON from a rejected field without echoing the response", () => {
+  assert.throws(() => parseModelResponse("not JSON: private-response-value", analysisSchema), error => {
+    assert.ok(error instanceof ModelResponseError);
+    assert.equal(error.kind, "invalid_json");
+    assert.doesNotMatch(error.message, /private-response-value/);
+    return true;
+  });
+  const answer = { title: "Example", claims: [{ id: "one", text: "Claim", sourceLocation: "Section 3", evidenceId: "paper:0", feasible: "private-response-value", reason: "Reason" }], plan: null, blockedReason: "Unavailable" };
+  assert.throws(() => parseModelResponse(JSON.stringify(answer), analysisSchema), error => {
+    assert.ok(error instanceof ModelResponseError);
+    assert.equal(error.kind, "invalid_schema");
+    assert.equal(error.issues[0].path, "claims.0.feasible");
+    assert.match(error.message, /claims\.0\.feasible/);
+    assert.doesNotMatch(error.message, /private-response-value/);
+    return true;
+  });
+  const valid = { ...answer, claims: [{ ...answer.claims[0], feasible: true }] };
+  assert.deepEqual(parseModelResponse(JSON.stringify(valid), analysisSchema), valid);
 });
