@@ -3,6 +3,7 @@ import "./globals.css";
 import "./workspace.css";
 import "./demo.css";
 import "./agent-workbench.css";
+import "./result-view.css";
 import "./auth.css";
 
 export const metadata: Metadata = {
