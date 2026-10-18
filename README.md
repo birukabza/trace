@@ -127,7 +127,7 @@ Import the repository with these settings:
 - Framework: Next.js
 - Node.js: 24.x
 - Build command: `npm run build`
-- Output directory: framework default
+- Output directory: framework default (`.next`)
 
 Set the frontend variables:
 
