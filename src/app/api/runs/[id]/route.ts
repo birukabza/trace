@@ -1,7 +1,5 @@
-import { getRun } from "@/lib/server/runs";
+import { proxyBackend } from "@/lib/server/backend-proxy";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
-  const run = getRun((await context.params).id);
-  return run ? Response.json(run) : Response.json({ error: "Run not found." }, { status: 404 });
-}
+export const maxDuration = 60;
+export const GET = proxyBackend;

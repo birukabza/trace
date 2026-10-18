@@ -1,11 +1,5 @@
-import { approveRun, getRun } from "@/lib/server/runs";
-import { errorResponse, readJson, requireSameOrigin } from "@/lib/server/http";
+import { proxyBackend } from "@/lib/server/backend-proxy";
 export const runtime = "nodejs";
-export async function POST(request: Request, context: { params: Promise<{ id: string }> }) {
-  try {
-    requireSameOrigin(request);
-    const { id } = await context.params;
-    if (!getRun(id)) return Response.json({ error: "Run not found." }, { status: 404 });
-    return Response.json(approveRun(id, await readJson(request)));
-  } catch (error) { return errorResponse(error, 409); }
-}
+export const dynamic = "force-dynamic";
+export const maxDuration = 60;
+export const POST = proxyBackend;

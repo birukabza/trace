@@ -2,6 +2,8 @@ import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import "./workspace.css";
 import "./demo.css";
+import "./agent-workbench.css";
+import "./auth.css";
 
 export const metadata: Metadata = {
   title: "Trace | Research deserves a second run",

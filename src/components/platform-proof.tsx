@@ -2,7 +2,7 @@ import { ChevronDown } from "lucide-react";
 import { PROJECT_INTEGRATION } from "@/lib/capabilities";
 import type { Run } from "@/lib/types";
 
-type SandboxEvidence = { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean };
+type SandboxEvidence = NonNullable<Run["sandbox"]>;
 
 export function PlatformProof({ run }: { run?: Run & { sandbox?: SandboxEvidence } }) {
   const liveAttempts = run?.mode === "live" ? run.attempts.filter(attempt => attempt.provider === "createos") : [];
@@ -21,6 +21,7 @@ export function PlatformProof({ run }: { run?: Run & { sandbox?: SandboxEvidence
           {sandbox.forkedFrom && <li>Forked from <code>{sandbox.forkedFrom}</code> for this investigation.</li>}
           {sandbox.egressRestricted && <li>Outbound network access restricted for this investigation.</li>}
           {sandbox.pausedAfterRun && <li>Sandbox paused after execution.</li>}
+          {sandbox.releasedAt && <li>Temporary workspace later released to recover capacity. The saved code and execution evidence remain available.</li>}
         </ul>}
       </div>
     </div>

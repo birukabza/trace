@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { MODEL, riverKey } from "./config";
 import type { ExperimentPlan } from "../types";
 import type { AgentExecution } from "./agent-loop";
+import { dataPath } from "./paths";
 
 const claimSchema = z.object({ id: z.string().max(100), text: z.string().max(2000), sourceLocation: z.string().max(500), evidenceId: z.string().max(100), reportedValue: z.string().max(500).optional(), metric: z.string().max(200).optional(), feasible: z.boolean(), reason: z.string().max(2000) });
 export const planSchema = z.object({ claimId: z.string().max(100), title: z.string().max(300), hypothesis: z.string().max(3000), summary: z.string().min(1).max(220).optional(), method: z.string().max(6000), dataset: z.string().max(2000), metrics: z.array(z.string().max(300)).min(1).max(12), dependencies: z.array(z.string().max(100)).max(10), estimatedSeconds: z.number().min(1).max(60), limitations: z.array(z.string().max(2000)).min(1).max(15), pythonCode: z.string().min(10).max(40_000), scope: z.enum(["component_check", "reduced_experiment", "reproduction"]) });
@@ -69,7 +70,7 @@ export function parseModelResponse<T>(content: string, schema: z.ZodType<T>): T 
 function saveRejectedResponse(content: string, error: ModelResponseError, metadata: { finishReason: unknown; usage: unknown }) {
   try {
     const id = randomUUID();
-    const directory = join(process.cwd(), "data", "model-responses");
+    const directory = dataPath("model-responses");
     mkdirSync(directory, { recursive: true, mode: 0o700 });
     writeFileSync(join(directory, `${id}.json`), JSON.stringify({
       id, at: new Date().toISOString(), model: MODEL, kind: error.kind, issues: error.issues,

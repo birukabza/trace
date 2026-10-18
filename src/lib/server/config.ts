@@ -16,5 +16,5 @@ export function createosCredentialSource(): "stripe_projects" | "custom" {
 }
 
 export function configuration() {
-  return { riverConfigured: Boolean(riverKey()), createosConfigured: Boolean(createosKey()), model: MODEL, sandboxRegion: "eu", sandboxId: SANDBOX_ID, sandboxUrl: SANDBOX_URL, authentication: "local-only", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
+  return { riverConfigured: Boolean(riverKey()), createosConfigured: Boolean(createosKey()), model: MODEL, sandboxRegion: "eu", sandboxId: SANDBOX_ID, sandboxUrl: SANDBOX_URL, authentication: "supabase-email-password", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
 }

@@ -14,8 +14,13 @@ a small monochrome Shaders sphere in the introduction link.
 
 New investigations proceed automatically from reading to writing, running and,
 when code fails, repairing. A small phase trail follows persisted state.
-“See the agent work” opens the generated code, actual errors, revision
-diagnoses, source coverage and activity. The main screen stays minimal.
+Once code exists, a compact code panel is visible by default. Code, Output and,
+after a repair, Changes show the actual program, captured stdout/stderr and a
+before/after diff. A written revision is persisted before execution, so the
+panel shows the next version while its workspace resumes. The orb becomes
+smaller to leave room for the agent's work. Source context and activity remain
+expandable. Sandbox setup reports actual provider operations instead of one
+generic queue message.
 Older pending investigations have a Continue action; viewing history never
 starts them automatically. No approval step is used for new investigations.
 

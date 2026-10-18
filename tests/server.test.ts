@@ -55,6 +55,10 @@ test("a retry preserves failed evidence and creates a separate automatic run", (
   retry.plan!.limitations.push("New limitation");
   assert.equal(original.plan.limitations.length, 1);
   assert.throws(() => prepareRetry({ ...original, status: "completed" }));
+  const legacy = { ...original, status: "completed" as const, attempts: [{ ...original.attempts[0], exitCode: 0, stderr: "", stdout: '{"value":42}' }] };
+  assert.equal(prepareRetry(legacy).plan?.pythonCode, original.plan.pythonCode);
+  assert.equal(legacy.status, "completed");
+  assert.throws(() => prepareRetry({ ...legacy, attempts: [{ ...legacy.attempts[0], stdout: '{"metrics":{"value":42}}' }] }));
 });
 
 test("queue validation rejects absent plans, infeasible claims and previous execution", () => {
@@ -103,6 +107,19 @@ test("run evidence persists across database reopen", () => {
   const second = new RunStore(path);
   try { assert.deepEqual(second.get(value.id), value); assert.equal(second.list().length, 1); }
   finally { second.close(); rmSync(folder, { recursive: true }); }
+});
+
+test("resource recovery selects only retained paused terminal forks", () => {
+  const database = new RunStore(":memory:");
+  const base = run();
+  const sandbox = {id:"child",forkedFrom:"base",pausedAfterRun:true};
+  database.save({...base,id:"eligible",status:"completed",sandbox});
+  database.save({...base,id:"active",status:"running",sandbox});
+  database.save({...base,id:"unconfirmed",status:"failed",sandbox:{...sandbox,pausedAfterRun:false}});
+  database.save({...base,id:"released",status:"completed",sandbox:{...sandbox,releasedAt:"now"}});
+  database.save({...base,id:"base",status:"completed",sandbox:{id:"base",pausedAfterRun:true}});
+  try { assert.deepEqual(database.reclaimableWorkspaces().map(value=>value.id),["eligible"]); }
+  finally { database.close(); }
 });
 
 test("active work cannot disappear behind the 50-run history limit", () => {

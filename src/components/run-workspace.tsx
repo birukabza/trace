@@ -7,6 +7,8 @@ import { ProcessOrb } from "./process-orb";
 import type { OrbState } from "thinking-orbs";
 import { PlatformProof } from "./platform-proof";
 import { RESEARCH_LIMITS } from "@/lib/capabilities";
+import { AgentWorkbench } from "./agent-workbench";
+import { parseMeasurements } from "@/lib/measurements";
 
 export const ACTIVE_STATUSES: RunStatus[] = ["analyzing", "queued", "running", "repairing"];
 export const STATUS_LABELS: Record<RunStatus, string> = {
@@ -38,7 +40,7 @@ function Protocol({ run, onApprove, busy }: { run: Run; onApprove: () => void; b
 function ActivityLog({ run }: { run: Run }) {
   return <ol className="bench-timeline">{run.events.map((event, index) => {
     const pending = index === run.events.length - 1 && ACTIVE_STATUSES.includes(run.status);
-    const failed = ["failed", "blocked", "cancelled"].includes(event.stage);
+    const failed = ["failed", "blocked", "cancelled", "validation"].includes(event.stage);
     return <li key={event.id} className={failed ? "event-warning" : ""}><span className="event-symbol">{pending ? <Loader2 size={14} className="spin" /> : failed ? <X size={13} /> : <Check size={13} />}</span><div><div className="event-title"><h3>{event.stage.replaceAll("_", " ")}</h3><time dateTime={event.at}>{time(event.at)}</time></div><p>{event.message}</p></div></li>;
   })}</ol>;
 }
@@ -90,25 +92,30 @@ function Evidence({ run }: { run: Run }) {
   const attemptIndex = selectedAttempt ?? Math.max(0, run.attempts.length - 1);
   const result = run.result;
   const attempt = run.attempts[attemptIndex];
+  const invalidMeasurements = run.mode === "live" && Boolean(result) && run.attempts.at(-1)?.exitCode === 0 && !parseMeasurements(run.attempts.at(-1)!.stdout);
   const labels = { matched: "Matched within this experiment", partial: "Part of the paper tested", differed: "Results differed", blocked: "Experiment stopped" };
   return <div className="evidence-sheet stage-enter">
     <div className={`outcome-mark ${result ? "" : "outcome-warning"}`}>{result ? <Check size={20} /> : <Info size={20} />}</div>
-    <span className="quiet-label">{result ? labels[result.verdict] : "Experiment stopped"}</span>
-    <h1>{result ? "Here is what we found." : "The experiment needs another look."}</h1>
-    <p className="result-summary">{result?.summary || "The experiment did not finish successfully. Its output is saved below."}</p>
-    {result && <>
+    <span className="quiet-label">{invalidMeasurements ? "Measurement output missing" : result ? labels[result.verdict] : "Experiment stopped"}</span>
+    <h1>{invalidMeasurements ? "The output needs a correction." : result ? "Here is what we found." : "The experiment needs another look."}</h1>
+    <p className="result-summary">{invalidMeasurements ? "Python ran, but this older investigation did not return the required measurement format. Its code and original output are preserved below." : result?.summary || "The experiment did not finish successfully. Its output is saved below."}</p>
+    <AgentWorkbench key={run.id} run={run} />
+    {result && !invalidMeasurements && <>
       <details className="quiet-disclosure"><summary>See the measurements<ChevronDown size={15} /></summary><div className="disclosure-body"><ExperimentMeasurements metrics={result.metrics} /></div></details>
       {result.limitations.length > 0 && <div className="result-caveat"><span>Keep in mind</span><p>{result.limitations[0]}</p>{result.limitations.length > 1 && <details><summary>More about the scope</summary><ul>{result.limitations.slice(1).map(value => <li key={value}>{value}</li>)}</ul></details>}</div>}
     </>}
     <div className="report-download"><a className="primary-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report<ArrowDownToLine size={15} /></a></div>
     {Boolean(run.repairs?.length) && <details className="quiet-disclosure"><summary>How the agent fixed its code<ChevronDown size={15} /></summary><div className="disclosure-body"><RepairRecord run={run} /></div></details>}
-    {attempt && <details className="quiet-disclosure execution-details"><summary>Execution record{run.attempts.length > 1 ? ` · ${run.attempts.length} attempts` : ""}<ChevronDown size={15} /></summary><div className="disclosure-body"><div className="attempt-selector" aria-label="Select execution attempt">{run.attempts.map((item, index) => <button key={item.number} className={index === attemptIndex ? "active" : ""} aria-pressed={index === attemptIndex} onClick={() => setSelectedAttempt(index)}>Attempt {item.number}{item.exitCode === 0 ? " · passed" : " · stopped"}</button>)}</div>{attempt.changeReason && <p>{attempt.changeReason}</p>}<p className="execution-duration">Exit {attempt.exitCode} / {(attempt.durationMs / 1000).toFixed(1)}s</p><h3>Output</h3><pre className="terminal-output">{attempt.stdout || "No output"}</pre><h3>Errors</h3><pre className="terminal-output">{attempt.stderr || "No errors"}</pre><details><summary>Submitted code</summary><pre className="terminal-output">{attempt.code}</pre></details></div></details>}
+    {attempt && <details className="quiet-disclosure execution-details"><summary>Execution record{run.attempts.length > 1 ? ` · ${run.attempts.length} attempts` : ""}<ChevronDown size={15} /></summary><div className="disclosure-body"><div className="attempt-selector" aria-label="Select execution attempt">{run.attempts.map((item, index) => <button key={item.number} className={index === attemptIndex ? "active" : ""} aria-pressed={index === attemptIndex} onClick={() => setSelectedAttempt(index)}>Attempt {item.number}{item.exitCode === 0 && !item.validationError ? " · passed" : item.validationError ? " · invalid output" : " · stopped"}</button>)}</div>{attempt.changeReason && <p>{attempt.changeReason}</p>}<p className="execution-duration">Exit {attempt.exitCode} / {(attempt.durationMs / 1000).toFixed(1)}s</p><h3>Output</h3><pre className="terminal-output">{attempt.stdout || "No output"}</pre><h3>Errors</h3><pre className="terminal-output">{attempt.stderr || "No errors"}</pre><details><summary>Submitted code</summary><pre className="terminal-output">{attempt.code}</pre></details></div></details>}
   </div>;
 }
 type ProcessPhase = { title: string; description: string; orb: OrbState; step: number };
 function processPhase(run: Run): ProcessPhase {
-  if (run.status === "queued") return { title: "The experiment is ready.", description: "Preparing an isolated workspace in CreateOS.", orb: "connecting", step: 2 };
-  if (run.status === "repairing") return { title: "Fixing a coding error.", description: "Reading the real error, updating the code, then testing it again.", orb: "solving", step: 2 };
+  if (run.status === "queued") return { title: "Preparing the experiment.", description: run.events.filter(event => event.stage === "workspace_progress").at(-1)?.message || "Waiting for an execution slot.", orb: "connecting", step: 2 };
+  if (run.status === "repairing") {
+    if (run.repairs?.at(-1)?.afterAttempt === run.attempts.at(-1)?.number && run.workingCode) return { title: "The fix is ready.", description: "Submitting the revised code to CreateOS.", orb: "connecting", step: 2 };
+    return { title: "Fixing a coding error.", description: "Reading the execution feedback and correcting the code.", orb: "solving", step: 2 };
+  }
   if (run.status === "running") {
     if (run.result) return { title: "Bringing the evidence together.", description: "Saving the report and pausing the experiment workspace.", orb: "composing", step: 2 };
     return { title: run.attempts.length ? "Testing the fix." : "Putting the claim to the test.", description: run.attempts.length ? "Running the revised code in CreateOS." : "Running the generated experiment in CreateOS.", orb: "working", step: 2 };
@@ -121,18 +128,16 @@ function processPhase(run: Run): ProcessPhase {
 export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () => void; busy?: boolean }) {
   const phase = run ? processPhase(run) : { title: "Opening your research.", description: "Everything will be here in a moment.", orb: "connecting" as const, step: 0 };
   const key = `${run?.status || "opening"}-${phase.orb}`;
-  const lastAttempt = run?.attempts.at(-1);
-  return <section className="process-view stage-enter" aria-label="Research in progress">
+  return <section className={`process-view stage-enter ${run?.plan ? "has-code" : ""}`} aria-label="Research in progress">
     {run && <p className="process-paper" title={run.paper?.title || run.sourceUrl}>{run.paper?.title || (run.sourceUrl.includes("github.com") ? "Your repository" : "Your paper")}</p>}
-    <ProcessOrb state={phase.orb} label={phase.title} />
-    <div key={key} className="process-copy stage-enter" role="status" aria-live="polite" aria-atomic="true"><h1>{phase.title}</h1><p>{phase.description}</p></div>
+    <div className="process-status"><ProcessOrb state={phase.orb} label={phase.title} />
+    <div key={key} className="process-copy stage-enter" role="status" aria-live="polite" aria-atomic="true"><h1>{phase.title}</h1><p>{phase.description}</p></div></div>
     {run && <>
       <ol className="phase-trail" aria-label="Investigation progress">{["Read", "Write", run.status === "repairing" ? "Repair" : "Run"].map((label, index) => <li key={index} aria-current={index === phase.step ? "step" : undefined} className={index < phase.step ? "phase-done" : ""}>{index < phase.step ? <Check size={10} aria-hidden="true" /> : <span aria-hidden="true" />}{label}</li>)}</ol>
-      <details className="agent-inspection product-disclosure"><summary>See the agent work<ChevronDown size={13} aria-hidden="true" /></summary><div className="product-disclosure-body">
+      <AgentWorkbench key={run.id} run={run} />
+      <details className="agent-inspection product-disclosure"><summary>Research context<ChevronDown size={13} aria-hidden="true" /></summary><div className="product-disclosure-body">
         {run.plan && <><p className="agent-question">{run.plan.summary || run.plan.title}</p><p>{SCOPE_LABELS[run.plan.scope]}. This is the question Trace is testing.</p></>}
-        {lastAttempt && <div className="agent-last-attempt"><h3>Attempt {lastAttempt.number} {lastAttempt.exitCode === 0 ? "finished" : "stopped with an error"}</h3>{lastAttempt.stderr && <pre className="terminal-output">{lastAttempt.stderr}</pre>}{!lastAttempt.stderr && lastAttempt.stdout && <pre className="terminal-output">{lastAttempt.stdout}</pre>}</div>}
         <RepairRecord run={run} />
-        {run.plan && <details className="quiet-disclosure"><summary>{lastAttempt ? "Last executed Python" : "Generated Python"}<ChevronDown size={14} /></summary><div className="disclosure-body"><CodePanel run={run} submittedCode={lastAttempt?.code} /></div></details>}
         <details className="quiet-disclosure"><summary>Activity<ChevronDown size={14} /></summary><div className="disclosure-body"><ActivityLog run={run} /></div></details>
         <SourceCoverage run={run} />
       </div></details>
@@ -146,13 +151,14 @@ export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }
 }) {
   const active = ACTIVE_STATUSES.includes(run.status);
   const failed = ["failed", "blocked"].includes(run.status);
+  const invalidOutput = run.mode === "live" && run.status === "completed" && run.attempts.length > 0 && !parseMeasurements(run.attempts.at(-1)!.stdout);
   return <main className={`workspace ${active ? "is-processing" : ""}`}>
     <div className="workspace-topline"><button className="text-button" onClick={onBack}><ArrowLeft size={14} />New research</button>{!active && <a className="text-button" href={run.sourceUrl} target="_blank" rel="noreferrer">Read paper<ArrowUpRight size={13} /></a>}</div>
     {active ? <ProcessView run={run} onCancel={onCancel} busy={busy} /> : <div className="research-sheet stage-enter">
       <p className="paper-byline">{run.paper?.title || run.title}</p>
       {run.mode === "example" && <p className="example-note">Recorded example. These are measurements from a previous experiment.</p>}
       {run.status === "awaiting_approval" ? <><Protocol run={run} onApprove={onApprove} busy={busy} /><button className="text-button review-cancel" onClick={onCancel} disabled={busy}>Cancel experiment</button></> : run.result || run.attempts.length ? <Evidence run={run} /> : <div className="outcome-empty"><ProcessOrb state={failed ? "shaping" : "breathing"} label={failed ? "Experiment stopped" : "Research paused"} still /><h1>{failed ? "We could not finish this one." : "You stopped this investigation."}</h1><p>{failed ? "No result is available. The details below explain where it stopped." : "You can start again whenever you are ready."}</p><button className="secondary-button" onClick={onBack}>Start a new investigation<ArrowRight size={14} /></button></div>}
-      {failed && run.plan && <div className="retry-protocol"><p>The saved experiment and its evidence are kept. You can start a fresh attempt.</p><button className="secondary-button" onClick={onRetry} disabled={busy}>Try again<ArrowRight size={14} /></button></div>}
+      {(failed || invalidOutput) && run.plan && <div className="retry-protocol"><p>{invalidOutput ? "The process ran, but its output needs correction. Retry the unchanged experiment with automatic output validation and repair." : "The saved experiment and its evidence are kept. You can start a fresh attempt."}</p><button className="secondary-button" onClick={onRetry} disabled={busy}>{invalidOutput ? "Repair measurement output" : "Try again"}<ArrowRight size={14} /></button></div>}
       <details className="quiet-disclosure research-details"><summary>Research details<ChevronDown size={15} /></summary><div className="disclosure-body">
         {run.error && <p className="detail-error">{run.error}</p>}
         <SourceCoverage run={run} />

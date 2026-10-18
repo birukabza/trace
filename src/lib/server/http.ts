@@ -1,3 +1,7 @@
+export class PublicRunError extends Error {
+  constructor(message: string, readonly status = 400) { super(message); this.name = "PublicRunError"; }
+}
+
 export function requireSameOrigin(request: Request) {
   const origin = request.headers.get("origin");
   const site = request.headers.get("sec-fetch-site");

@@ -2,7 +2,7 @@ export type CodeRepair =
   | { action: "repair"; diagnosis: string; summary: string; pythonCode: string }
   | { action: "stop"; reason: string };
 
-export type AgentExecution = { stdout: string; stderr: string; exitCode: number; durationMs: number };
+export type AgentExecution = { stdout: string; stderr: string; exitCode: number; durationMs: number; validationError?: string };
 type HistoryEntry = { number: number; code: string; output: AgentExecution };
 export type AgentAttempt = HistoryEntry & { changeReason?: string };
 
@@ -17,7 +17,7 @@ type AgentLoopOptions = {
   onRevision: (repair: Extract<CodeRepair, { action: "repair" }>, nextAttempt: number) => void | Promise<void>;
 };
 
-/** A bounded write/run/fix loop. Transport failures propagate; only actual code exits invite repair. */
+/** A bounded write/run/fix loop. Execution or output-validation failures invite repair; transport failures propagate. */
 export async function runAgentLoop({
   initialCode, maxAttempts = 3, signal, execute, repair, onAttempt, onRepairing, onRevision,
 }: AgentLoopOptions): Promise<{ status: "succeeded" | "exhausted" | "stopped"; reason?: string }> {
@@ -36,7 +36,7 @@ export async function runAgentLoop({
     history = Object.freeze([...history, entry]);
     await onAttempt({ ...structuredClone(entry), ...(changeReason ? { changeReason } : {}) });
     checkCancelled();
-    if (entry.output.exitCode === 0) return { status: "succeeded" };
+    if (entry.output.exitCode === 0 && !entry.output.validationError) return { status: "succeeded" };
     if (number === maxAttempts) return { status: "exhausted", reason: `The experiment did not succeed within ${maxAttempts} execution attempts.` };
 
     checkCancelled();

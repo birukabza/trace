@@ -4,22 +4,30 @@
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=24"
+    "node": "24.x"
   },
   "scripts": {
-    "dev": "next dev --webpack --hostname 127.0.0.1",
+    "dev": "concurrently --kill-others --names web,worker npm:dev:frontend npm:dev:backend",
+    "dev:frontend": "next dev --webpack --hostname 127.0.0.1",
+    "dev:backend": "tsx watch backend/server.ts",
     "build": "next build --webpack",
     "start": "next start --hostname 127.0.0.1",
+    "build:backend": "esbuild backend/server.ts --bundle --platform=node --target=node24 --format=esm --packages=external --outfile=dist/backend/server.mjs",
+    "start:backend": "node dist/backend/server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "tsx --test tests/*.test.ts",
-    "verify": "npm run typecheck && npm test && npm run build"
+    "verify": "npm run typecheck && npm test && npm run build && npm run build:backend"
   },
   "dependencies": {
+    "@next/env": "^16.4.2",
     "@nodeops-createos/sandbox": "latest",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.118.0",
     "lucide-react": "latest",
     "next": "latest",
     "react": "latest",
     "react-dom": "latest",
+    "server-only": "^0.0.1",
     "shaders": "latest",
     "thinking-orbs": "^0.3.2",
     "unpdf": "latest",
@@ -29,6 +37,8 @@
     "@types/node": "latest",
     "@types/react": "latest",
     "@types/react-dom": "latest",
+    "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
     "tsx": "latest",
     "typescript": "^5.9.3"
   }

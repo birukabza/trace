@@ -7,6 +7,21 @@ const succeeded: AgentExecution = { stdout: '{"score":0.95}\n', stderr: "", exit
 const revision = (code: string): CodeRepair => ({ action: "repair", diagnosis: "A variable was undefined.", summary: "Define the missing variable.", pythonCode: code });
 const observers = { onAttempt() {}, onRepairing() {}, onRevision() {} };
 
+test("invalid measurements trigger repair while preserving the real successful process exit", async () => {
+  const invalid = { ...succeeded, stdout: '{"score":0.95}', validationError: 'Missing metrics object' };
+  const attempts: AgentAttempt[] = [];
+  let repaired = false;
+  const result = await runAgentLoop({ ...observers, initialCode: "original program",
+    execute: async (_code, number) => number === 1 ? invalid : { ...succeeded, stdout: '{"metrics":{"score":0.95}}' },
+    repair: async history => { assert.equal(history[0].output.exitCode, 0); assert.equal(history[0].output.validationError, 'Missing metrics object'); repaired = true; return revision("corrected serialization"); },
+    onAttempt: attempt => { attempts.push(attempt); },
+  });
+  assert.equal(repaired, true);
+  assert.equal(result.status, "succeeded");
+  assert.deepEqual(attempts.map(attempt => attempt.output.exitCode), [0, 0]);
+  assert.equal(attempts[0].output.stderr, "");
+});
+
 test("a failed execution is preserved, repaired from its real logs, and run again", async () => {
   const events: string[] = [];
   const attempts: AgentAttempt[] = [];

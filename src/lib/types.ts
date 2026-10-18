@@ -41,6 +41,7 @@ export interface Attempt {
   stderr: string;
   exitCode: number;
   durationMs: number;
+  validationError?: string;
   changeReason?: string;
   provider?: "createos";
   sandboxId?: string;
@@ -57,6 +58,7 @@ export interface ExperimentResult {
 
 export interface Run {
   id: string;
+  ownerId?: string;
   sourceUrl: string;
   repositoryUrl?: string;
   title: string;
@@ -72,8 +74,9 @@ export interface Run {
   error?: string;
   mode: "live" | "example";
   executionMode?: "automatic";
-  repairs?: { afterAttempt: number; diagnosis: string; summary: string; codeHash: string; at: string }[];
-  sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean };
+  workingCode?: { code: string; attempt: number; updatedAt: string };
+  repairs?: { afterAttempt: number; diagnosis: string; summary: string; codeHash: string; pythonCode?: string; at: string }[];
+  sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean; releasedAt?: string };
 }
 
 export interface Health {

@@ -40,6 +40,7 @@
   "exclude": [
     "node_modules",
     "experiments",
+    "artifacts",
     ".agents",
     ".claude",
     ".cursor"

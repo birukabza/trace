@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { CreateosSandboxClient, type ForkSandboxRequest, type Sandbox } from "@nodeops-createos/sandbox";
-import { createExperimentSandbox, type ExperimentSandboxMetadata } from "../src/lib/server/sandbox";
+import { createExperimentSandbox, isSandboxQuotaError, releaseExperimentSandbox, type ExperimentSandboxMetadata } from "../src/lib/server/sandbox";
+import { SANDBOX_ID } from "../src/lib/server/config";
+
+test("only a confirmed concurrency quota rejection can trigger capacity recovery", () => {
+  assert.equal(isSandboxQuotaError(Object.assign(new Error("sandbox concurrent quota reached (5 / 5)"), {statusCode:429})), true);
+  assert.equal(isSandboxQuotaError(Object.assign(new Error("request rate limit"), {statusCode:429})), false);
+  assert.equal(isSandboxQuotaError(new Error("sandbox concurrent quota reached")), false);
+});
+
+test("capacity recovery releases only a cloud-confirmed paused Trace fork", async () => {
+  let destroys = 0;
+  const box = {status:"paused",data:{forked_from:SANDBOX_ID,envs:["TRACE_EXPERIMENT_ID"]},destroy:async()=>{destroys++;},waitUntilDestroyed:async()=>{}};
+  await withClient(box, async () => {
+    await releaseExperimentSandbox("old-child",SANDBOX_ID);
+    assert.equal(destroys,1);
+    await assert.rejects(releaseExperimentSandbox(SANDBOX_ID,SANDBOX_ID));
+    box.status="running";
+    await assert.rejects(releaseExperimentSandbox("old-child",SANDBOX_ID));
+    box.status="paused";box.data.forked_from="someone-else";
+    await assert.rejects(releaseExperimentSandbox("old-child",SANDBOX_ID));
+    box.data.forked_from=SANDBOX_ID;box.data.envs=[];
+    await assert.rejects(releaseExperimentSandbox("old-child",SANDBOX_ID));
+    assert.equal(destroys,1);
+  });
+});
 
 function fixture(egress = ["192.0.2.1:443"]) {
   const calls: string[] = [];
@@ -48,17 +72,18 @@ test("experiment fork restores base, verifies restriction, and pauses after canc
     const session = await createExperimentSandbox("run-1", controller.signal, value => { metadata.push(value); });
     assert.equal(session.id, "child");
     assert.equal(session.egressRestricted, true);
-    assert.equal(f.base.status, "running");
+    assert.equal(f.base.status, "paused");
     assert.equal(f.child.status, "running");
     assert.deepEqual(f.request(), {
       start_paused: true, ingress_enabled: false,
       egress: ["192.0.2.1:443"], envs: { TRACE_EXPERIMENT_ID: "run-1" },
     });
     assert.deepEqual(metadata.map(value => value.egressRestricted), [false, true]);
-    assert.ok(f.calls.indexOf("base:resume") < f.calls.indexOf("child:resume"));
+    assert.ok(!f.calls.includes("base:resume"));
     assert.ok(f.calls.includes("child:autopause:300"));
     controller.abort();
     await session.pause();
+    assert.ok(f.calls.lastIndexOf("child:paused") < f.calls.indexOf("base:resume"));
     assert.equal(f.child.status, "paused");
     assert.equal(f.base.status, "running");
   });

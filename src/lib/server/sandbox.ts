@@ -44,6 +44,19 @@ export async function pauseExperimentSandbox(id: string): Promise<void> {
   await pauseWorkspace(box);
 }
 
+export function isSandboxQuotaError(error: unknown): boolean {
+  return error instanceof Error && "statusCode" in error && error.statusCode === 429 && /sandbox concurrent quota reached/i.test(error.message);
+}
+
+export async function releaseExperimentSandbox(id: string, forkedFrom: string): Promise<void> {
+  if (id === SANDBOX_ID || forkedFrom !== SANDBOX_ID) throw new Error("Only this app’s experiment forks can be released.");
+  const box = await sandboxClient().getSandbox(id, CONTROL_REQUEST);
+  if (box.status === "destroyed") return;
+  if (box.status !== "paused" || box.data.forked_from !== forkedFrom || !box.data.envs?.includes("TRACE_EXPERIMENT_ID")) throw new Error("The old workspace could not be confirmed as a paused Trace experiment fork.");
+  await box.destroy(CONTROL_REQUEST);
+  await box.waitUntilDestroyed(CONTROL_WAIT);
+}
+
 async function resumeWorkspace(box: Sandbox, signal?: AbortSignal): Promise<void> {
   const request = { ...CONTROL_REQUEST, signal };
   const wait = { ...CONTROL_WAIT, signal };
@@ -57,39 +70,40 @@ export async function createExperimentSandbox(
   runId: string,
   signal: AbortSignal,
   onCreated: (metadata: ExperimentSandboxMetadata) => void | Promise<void>,
+  onProgress: (message: string) => void | Promise<void> = () => {},
 ): Promise<ExperimentSandboxSession> {
   const client = sandboxClient();
   const request = { ...CONTROL_REQUEST, signal };
   const wait = { ...CONTROL_WAIT, signal };
+  await onProgress("Connecting to the CreateOS workspace.");
   const base = await client.getSandbox(SANDBOX_ID, request);
   const restoreBase = base.status === "running" || base.status === "resuming";
   let child: Sandbox | undefined;
 
   try {
-    try {
-      if (base.status === "resuming") await base.waitUntilRunning(wait);
-      if (base.status === "running") await base.pause(request);
-      if (base.status !== "paused") await base.waitUntilPaused(wait);
-      child = await base.fork({
-        start_paused: true,
-        ingress_enabled: false,
-        egress: EXPERIMENT_EGRESS,
-        // A nonempty map replaces inherited declared environment variables.
-        // The base snapshot itself must contain no credentials or secret files.
-        envs: { TRACE_EXPERIMENT_ID: runId },
-      }, request);
-      // Persist before polling: a crash or cancellation must leave an identity
-      // that recovery can find. Never blindly retry an ambiguous fork request.
-      await onCreated({ id: child.id, forkedFrom: base.id, egressRestricted: false });
-      await child.waitUntilPaused(wait);
-    } finally {
-      // The existing hackathon VM is never destroyed. Restore its original
-      // running state with independent requests even if the run was cancelled.
-      if (restoreBase) await resumeWorkspace(base);
-    }
+    await onProgress("Preparing the base workspace for an isolated fork.");
+    if (base.status === "resuming") await base.waitUntilRunning(wait);
+    if (base.status === "running") await base.pause(request);
+    if (base.status !== "paused") await base.waitUntilPaused(wait);
+    await onProgress("Creating an isolated copy of the workspace.");
+    child = await base.fork({
+      start_paused: true,
+      ingress_enabled: false,
+      egress: EXPERIMENT_EGRESS,
+      // A nonempty map replaces inherited declared environment variables.
+      // The base snapshot itself must contain no credentials or secret files.
+      envs: { TRACE_EXPERIMENT_ID: runId },
+    }, request);
+    // Persist before polling: a crash or cancellation must leave an identity
+    // that recovery can find. Never blindly retry an ambiguous fork request.
+    await onCreated({ id: child.id, forkedFrom: base.id, egressRestricted: false });
+    await onProgress("The fork was created. Waiting for its Python runtime to be ready.");
+    await child.waitUntilPaused(wait);
 
+    await onProgress("Starting the experiment workspace.");
     await resumeWorkspace(child, signal);
     await child.setAutoPause(300, request);
+    await onProgress("Checking the experiment workspace’s network restrictions.");
     const policy = await child.getEgress(request);
     if (policy.egress.length !== EXPERIMENT_EGRESS.length ||
       !EXPERIMENT_EGRESS.every(rule => policy.egress.includes(rule))) {
@@ -100,16 +114,19 @@ export async function createExperimentSandbox(
     return {
       id: child.id,
       egressRestricted: true,
-      pause: () => pauseWorkspace(sessionBox),
+      pause: async () => {
+        try { await pauseWorkspace(sessionBox); }
+        finally { if (restoreBase) await resumeWorkspace(base); }
+      },
       resume: () => resumeWorkspace(sessionBox, signal),
     };
   } catch (error) {
-    if (child) {
+    try { if (child) {
       try { await pauseWorkspace(child); }
       catch (cleanupError) {
         throw new AggregateError([error, cleanupError], "Experiment setup failed and its workspace could not be confirmed paused.");
       }
-    }
+    } } finally { if (restoreBase) await resumeWorkspace(base); }
     throw error;
   }
 }

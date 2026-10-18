@@ -6,9 +6,12 @@ import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
 import { analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
-import { createExperimentSandbox, executeNumerical, holdExecutionLease, pauseExperimentSandbox } from "./sandbox";
+import { createExperimentSandbox, executeNumerical, holdExecutionLease, pauseExperimentSandbox, isSandboxQuotaError, releaseExperimentSandbox } from "./sandbox";
 import { runAgentLoop } from "./agent-loop";
 import { RESEARCH_LIMITS } from "../capabilities";
+import { measurementFeedback, parseMeasurements } from "../measurements";
+import { PublicRunError } from "./http";
+import { dataPath } from "./paths";
 
 type WorkerState = { controllers: Map<string, AbortController>; execution: Promise<void>; recovered: boolean };
 const globalWorker = globalThis as typeof globalThis & { reproWorkers?: WorkerState };
@@ -62,8 +65,9 @@ export function recoverInterruptedRuns(database: RunStore, controllers: Map<stri
   });
 }
 
-export function getRun(id: string) { return store().get(id); }
-export function listRuns() { return store().list(); }
+export function getRun(id: string, ownerId: string) { return store().getOwned(id, ownerId); }
+export function listRuns(ownerId: string) { return store().listOwned(ownerId); }
+function readRun(id: string) { return store().get(id); }
 function saveActive(run: Run, signal: AbortSignal) {
   if (signal.aborted || store().get(run.id)?.status === "cancelled") throw new Error("Run cancelled.");
   store().save(run);
@@ -86,27 +90,31 @@ function recordedExample(): Run {
   return run;
 }
 
-export function createRun(input: Record<string, unknown>) {
+export function createRun(input: Record<string, unknown>, ownerId: string) {
+  if (!ownerId) throw new PublicRunError("Sign in to continue.", 401);
   if (input.mode === "example") {
-    const run = recordedExample(); store().save(run); return run;
+    const run = recordedExample(); run.ownerId = ownerId; store().save(run); return run;
   }
-  if (store().active().length >= 3) throw new Error("Three runs are already active. Wait for one to finish or cancel it.");
+  const active = store().active().filter(item => item.status !== "awaiting_approval");
+  if (active.some(item => item.ownerId === ownerId)) throw new PublicRunError("Wait for your active investigation to finish, or cancel it first.", 409);
+  if (active.length >= 3) throw new PublicRunError("All execution slots are occupied. Try again shortly.", 409);
   if (typeof input.retryFromId === "string") {
-    const original = getRun(input.retryFromId);
-    if (!original) throw new Error("Original run not found.");
+    const original = getRun(input.retryFromId, ownerId);
+    if (!original) throw new PublicRunError("Run not found.", 404);
     const run = prepareRetry(original);
     store().save(run);
     launch(run, signal => queueExecution(run, signal));
     return run;
   }
-  if (typeof input.sourceUrl !== "string") throw new Error("A paper or repository URL is required.");
+  if (typeof input.sourceUrl !== "string") throw new PublicRunError("A paper or repository URL is required.");
   validateSourceUrl(input.sourceUrl);
-  if (input.repositoryUrl !== undefined && typeof input.repositoryUrl !== "string") throw new Error("Repository URL must be text.");
+  if (input.repositoryUrl !== undefined && typeof input.repositoryUrl !== "string") throw new PublicRunError("Repository URL must be text.");
   if (typeof input.repositoryUrl === "string" && input.repositoryUrl) {
     const repository = validateSourceUrl(input.repositoryUrl);
-    if (repository.hostname !== "github.com") throw new Error("The author repository must be a public github.com URL.");
+    if (repository.hostname !== "github.com") throw new PublicRunError("The author repository must be a public github.com URL.");
   }
   const run = baseRun(input.sourceUrl, "live");
+  run.ownerId = ownerId;
   run.repositoryUrl = typeof input.repositoryUrl === "string" && input.repositoryUrl ? input.repositoryUrl : undefined;
   run.executionMode = "automatic";
   addEvent(run, "analyzing", "Reading source evidence, then writing, running and repairing one focused experiment automatically.");
@@ -121,8 +129,10 @@ export function createRun(input: Record<string, unknown>) {
 }
 
 export function prepareRetry(original: Run): Run {
-  if (original.mode !== "live" || !original.plan || !["blocked", "failed"].includes(original.status)) throw new Error("Only a failed or blocked experiment with an existing protocol can be retried.");
+  const invalidCompletedOutput = original.status === "completed" && original.attempts.at(-1)?.exitCode === 0 && !parseMeasurements(original.attempts.at(-1)!.stdout);
+  if (original.mode !== "live" || !original.plan || (!["blocked", "failed"].includes(original.status) && !invalidCompletedOutput)) throw new Error("Only a failed, blocked or invalid-output experiment with an existing protocol can be retried.");
   const run = baseRun(original.sourceUrl, "live");
+  if (original.ownerId) run.ownerId = original.ownerId;
   run.repositoryUrl = original.repositoryUrl;
   run.title = original.title;
   run.paper = structuredClone(original.paper);
@@ -157,6 +167,7 @@ async function analyze(run: Run, focus: string | undefined, signal: AbortSignal)
     } else {
       if (!analysis.claims.some(claim => claim.id === analysis.plan!.claimId && claim.feasible)) throw new Error("The proposed plan does not select a feasible extracted claim.");
       run.plan = analysis.plan;
+      run.workingCode = { code: analysis.plan.pythonCode, attempt: 1, updatedAt: new Date().toISOString() };
       if (source.sourceType === "github" || repository) run.plan.limitations = [...run.plan.limitations.slice(0, 14), "Only the repository README was inspected. Repository code, its commit, and dependency lockfiles were not downloaded or executed."];
       addEvent(run, "written", "Experiment code written. The original protocol and code are retained before execution.");
     }
@@ -166,15 +177,15 @@ async function analyze(run: Run, focus: string | undefined, signal: AbortSignal)
 }
 
 function failRun(run: Run, error: unknown, signal: AbortSignal) {
-  if (signal.aborted || getRun(run.id)?.status === "cancelled") return;
+  if (signal.aborted || readRun(run.id)?.status === "cancelled") return;
   transition(run, "failed");
   run.error = error instanceof Error ? error.message : "The run failed.";
   addEvent(run, "failed", run.error); store().save(run);
 }
 
-export function approveRun(id: string, input: Record<string, unknown>) {
-  const run = getRun(id);
-  if (!run) throw new Error("Run not found.");
+export function approveRun(id: string, input: Record<string, unknown>, ownerId: string) {
+  const run = getRun(id, ownerId);
+  if (!run) throw new PublicRunError("Run not found.", 404);
   if (run.status !== "awaiting_approval" || !run.plan) throw new Error("Only a pending legacy investigation can continue.");
   if (input.claimId && input.claimId !== run.plan.claimId) throw new Error("The selected claim must match the existing protocol.");
   if (!configuration().createosConfigured) throw new Error("CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server.");
@@ -211,9 +222,9 @@ async function queueExecution(run: Run, signal: AbortSignal) {
   await worker.execution;
 }
 
-export function cancelRun(id: string) {
-  const run = getRun(id);
-  if (!run) throw new Error("Run not found.");
+export function cancelRun(id: string, ownerId: string) {
+  const run = getRun(id, ownerId);
+  if (!run) throw new PublicRunError("Run not found.", 404);
   if (["completed", "blocked", "failed", "cancelled"].includes(run.status)) return run;
   transition(run, "cancelled");
   addEvent(run, "cancelled", "Cancelled locally. Any already-running remote command remains bounded by its 60-second process limit.");
@@ -224,7 +235,7 @@ async function execute(run: Run, signal: AbortSignal) {
   let workspace: Awaited<ReturnType<typeof createExperimentSandbox>> | undefined;
   try {
     store().saveExecutionLease(Date.now() + 240_000);
-    workspace = await createExperimentSandbox(run.id, signal, metadata => {
+    const createWorkspace = () => createExperimentSandbox(run.id, signal, metadata => {
       run.sandbox = { ...metadata };
       const current = store().get(run.id);
       if (signal.aborted || current?.status === "cancelled") {
@@ -233,35 +244,69 @@ async function execute(run: Run, signal: AbortSignal) {
         throw new Error("Run cancelled.");
       }
       store().save(run);
+    }, message => {
+      addEvent(run, "workspace_progress", message);
+      saveActive(run, signal);
     });
+    try { workspace = await createWorkspace(); }
+    catch (error) {
+      if (!isSandboxQuotaError(error)) throw error;
+      addEvent(run, "workspace_progress", "CreateOS capacity is full. Releasing an old paused experiment workspace while retaining its report.");
+      saveActive(run, signal);
+      let released = false;
+      for (const oldRun of store().reclaimableWorkspaces().slice(0, 3)) {
+        signal.throwIfAborted();
+        if (!oldRun.sandbox?.forkedFrom || worker.controllers.has(oldRun.id)) continue;
+        try { await releaseExperimentSandbox(oldRun.sandbox.id, oldRun.sandbox.forkedFrom); }
+        catch { continue; }
+        const previous = store().get(oldRun.id);
+        if (previous?.sandbox) {
+          previous.sandbox.releasedAt = new Date().toISOString();
+          addEvent(previous, "resource_released", "Paused temporary workspace released to recover CreateOS capacity. All saved source, code, measurements and execution records remain in this report.");
+          store().save(previous);
+        }
+        released = true;
+        addEvent(run, "resource_recovered", "Released an old Trace experiment fork. Retrying workspace creation after the confirmed quota rejection.");
+        saveActive(run, signal);
+        break;
+      }
+      if (!released) throw new Error("CreateOS capacity is full and no old paused Trace fork could be safely released. The base sandbox and other workspaces were preserved.");
+      signal.throwIfAborted();
+      workspace = await createWorkspace();
+    }
     addEvent(run, "sandbox", "Created an isolated fork with restricted external networking. The original workspace is preserved.");
     const outcome = await runAgentLoop({
       initialCode: run.plan!.pythonCode, maxAttempts: RESEARCH_LIMITS.maxAttempts, signal,
       execute: async (code, attempt) => {
+        run.workingCode = { code, attempt, updatedAt: new Date().toISOString() };
+        addEvent(run, "resuming", attempt > 1 ? "Submitting the revised code to the isolated workspace." : "The workspace is ready. Submitting the generated code.");
+        saveActive(run, signal);
         await workspace!.resume();
         signal.throwIfAborted();
         store().saveExecutionLease(Date.now() + 110_000);
         transition(run, "running");
         addEvent(run, "running", `Running Python in CreateOS · attempt ${attempt} of ${RESEARCH_LIMITS.maxAttempts}.`);
         saveActive(run, signal);
-        return executeNumerical(code, run.id, attempt, signal, workspace!.id);
+        const output = await executeNumerical(code, run.id, attempt, signal, workspace!.id);
+        return { ...output, ...(output.exitCode === 0 ? { validationError: measurementFeedback(output.stdout) } : {}) };
       },
       onAttempt: record => {
         run.attempts.push({ number: record.number, code: record.code, ...record.output, changeReason: record.changeReason, provider: "createos", sandboxId: workspace!.id, codeHash: hashCode(record.code), credentialSource: createosCredentialSource() });
         addEvent(run, "execution", `Attempt ${record.number} exited ${record.output.exitCode}. Original code, stdout and stderr saved.`);
+        if (record.output.validationError) addEvent(run, "validation", record.output.validationError);
         saveActive(run, signal);
       },
       onRepairing: async attempt => {
         transition(run, "repairing");
-        addEvent(run, "repairing", `Inspecting the actual error from attempt ${attempt} and repairing the implementation.`);
+        addEvent(run, "repairing", `Inspecting execution and measurement feedback from attempt ${attempt} and repairing the implementation.`);
         saveActive(run, signal);
-        await workspace!.pause();
-        addEvent(run, "paused", "CreateOS workspace paused while the agent reasons about the error.");
+        addEvent(run, "workspace_ready", "Keeping the isolated workspace ready while the agent diagnoses the feedback. It will pause after the experiment finishes.");
         saveActive(run, signal);
       },
       repair: history => riverJson(repairPrompt(run.plan!, history), repairSchema, signal),
       onRevision: (revision, nextAttempt) => {
-        (run.repairs ??= []).push({ afterAttempt: nextAttempt - 1, diagnosis: revision.diagnosis, summary: revision.summary, codeHash: hashCode(revision.pythonCode), at: new Date().toISOString() });
+        run.workingCode = { code: revision.pythonCode, attempt: nextAttempt, updatedAt: new Date().toISOString() };
+        (run.repairs ??= []).push({ afterAttempt: nextAttempt - 1, diagnosis: revision.diagnosis, summary: revision.summary, codeHash: hashCode(revision.pythonCode), pythonCode: revision.pythonCode, at: new Date().toISOString() });
         addEvent(run, "revised", revision.summary);
         saveActive(run, signal);
       },
@@ -304,14 +349,8 @@ async function execute(run: Run, signal: AbortSignal) {
 function hashCode(code: string) { return createHash("sha256").update(code).digest("hex"); }
 
 export function observedMetrics(stdout: string): ExperimentResult["metrics"] {
-  const lines = stdout.trim().split("\n");
-  for (const candidate of [stdout.trim(), ...lines.reverse()]) {
-    try {
-      const parsed = JSON.parse(candidate);
-      const values = parsed?.metrics;
-      if (values && typeof values === "object" && !Array.isArray(values)) return Object.entries(values).slice(0, 20).map(([name, value]) => ({ name: name.slice(0, 200), observed: (typeof value === "string" ? value : JSON.stringify(value)).slice(0, 2000) }));
-    } catch {}
-  }
+  const values = parseMeasurements(stdout);
+  if (values) return Object.entries(values).slice(0, 20).map(([name, value]) => ({ name: name.slice(0, 200), observed: (typeof value === "string" ? value : JSON.stringify(value)).slice(0, 2000) }));
   return [{ name: "Execution exit status", observed: "0; no structured metrics object was found in stdout" }];
 }
 
@@ -326,7 +365,7 @@ export function validateEvidenceQuotes(claims: { evidenceQuote?: string }[], sou
 
 function snapshotSource(text: string) {
   const hash = createHash("sha256").update(text).digest("hex");
-  const directory = join(process.cwd(), "data", "sources");
+  const directory = dataPath("sources");
   mkdirSync(directory, { recursive: true });
   try { writeFileSync(join(directory, `${hash}.txt`), text, { encoding: "utf8", flag: "wx" }); }
   catch (error) { if (!(error instanceof Error && "code" in error && error.code === "EEXIST")) throw error; }
