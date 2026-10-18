@@ -52,6 +52,11 @@
 .rv-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 28px 40px; margin-top: 28px; }
 .rv-grid p { margin: 0; font-size: 15px; line-height: 1.6; color: var(--rv-soft); overflow-wrap: anywhere; }
 .rv-quote { font-style: italic; }
+.rv-sources { margin: 14px 0 0; padding: 0; list-style: none; }
+.rv-sources li { display: flex; flex-direction: column; gap: 2px; padding: 10px 0; border-top: 1px solid var(--rv-rule); }
+.rv-sources a { color: #2997ff; font-size: 15px; text-decoration: none; overflow-wrap: anywhere; }
+.rv-sources a:hover { text-decoration: underline; }
+.rv-sources span { font-size: 13px; color: var(--rv-gray); }
 .rv-grid .rv-cite { margin-top: 6px; font-size: 13px; color: var(--rv-gray); }
 
 .rv-limits { margin: 20px 0 0; padding: 0; list-style: none; }

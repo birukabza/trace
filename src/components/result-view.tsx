@@ -93,6 +93,11 @@ function duration(ms: number) {
   return total < 60 ? `${total} s` : `${Math.floor(total / 60)} min ${total % 60} s`;
 }
 
+const sourceName = { openml: "OpenML", huggingface: "Hugging Face", github: "GitHub", zenodo: "Zenodo", url: "Linked in the paper" } as const;
+function formatBytes(bytes: number) {
+  return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`;
+}
+
 function DataTable({ table }: { table: Table }) {
   return <figure className="rv-table">
     <figcaption>{table.title}</figcaption>
@@ -157,7 +162,13 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
       <div className="rv-grid">
         <div><h3>Hypothesis</h3><p>{run.plan.hypothesis}</p></div>
         <div><h3>Method</h3><p>{run.plan.method}</p></div>
-        <div><h3>Data</h3><p>{run.plan.dataset}</p></div>
+        <div><h3>Data</h3><p>{run.plan.dataset}</p>
+          {Boolean(run.datasets?.selected.some(file => file.link)) && <ul className="rv-sources">{run.datasets!.selected.filter(file => file.link).map(file => <li key={file.url}>
+            <a href={file.pageUrl} target="_blank" rel="noreferrer">{file.title}</a>
+            <span>{[sourceName[file.source], file.bytes ? formatBytes(file.bytes) : ""].filter(Boolean).join(" · ")}</span>
+          </li>)}</ul>}
+          {Boolean(run.datasets?.unavailable.length) && <p className="rv-cite">Not found: {run.datasets!.unavailable.map(item => item.dataset).join(", ")}.</p>}
+        </div>
         {claim?.evidenceQuote && <div><h3>From the paper</h3><p className="rv-quote">“{claim.evidenceQuote}”</p><p className="rv-cite">{claim.sourceLocation}</p></div>}
       </div>
     </section>}

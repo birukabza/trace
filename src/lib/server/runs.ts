@@ -4,12 +4,14 @@ import { join } from "node:path";
 import type { Run, ExperimentResult } from "../types";
 import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
-import { RiverCreditError, RIVER_OUT_OF_CREDIT, storedPlan, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
+import { RiverCreditError, RIVER_OUT_OF_CREDIT, storedPlan, datasetChoicePrompt, datasetChoiceSchema, dataCodePrompt, dataCodeSchema, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
-import { cleanupRunFiles, ensurePoolSandboxRunning, executeProject, friendlySandboxError, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
+import { cleanupRunFiles, ensurePoolSandboxRunning, executeProject, fetchDatasets, type FetchFile, friendlySandboxError, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
 import { acquireSlot, queuePosition, releaseSlot, slotsBusy } from "./pool";
 import { runAgentLoop } from "./agent-loop";
 import { bundleProject, ENTRYPOINT, validateProject } from "../project";
+import { DATA_LIMITS, datasetSlug, describeCandidates, resolveDownload, searchDatasets } from "./datasets";
+import type { DatasetFile } from "../types";
 import { RESEARCH_LIMITS } from "../capabilities";
 import { measurementFeedback, parseMeasurements } from "../measurements";
 import { PublicRunError } from "./http";
@@ -149,6 +151,7 @@ export function prepareRetry(original: Run): Run {
   run.paper = structuredClone(original.paper);
   run.claims = structuredClone(original.claims);
   run.plan = structuredClone(original.plan);
+  if (original.datasets) run.datasets = structuredClone(original.datasets);
   run.executionMode = "automatic";
   addEvent(run, "retry", `Copied the unchanged protocol from run ${original.id}. The original execution evidence is preserved separately.`);
   return run;
@@ -180,7 +183,13 @@ async function analyze(run: Run, focus: string | undefined, signal: AbortSignal)
       run.plan = storedPlan(analysis.plan);
       run.workingCode = { code: run.plan.pythonCode, attempt: 1, updatedAt: new Date().toISOString() };
       if (source.sourceType === "github" || repository) run.plan.limitations = [...run.plan.limitations.slice(0, 14), "Only the repository README was inspected. Repository code, its commit, and dependency lockfiles were not downloaded or executed."];
-      addEvent(run, "written", "Experiment code written. The original protocol and code are retained before execution.");
+      if (run.plan.datasets?.length) {
+        addEvent(run, "planned", "Experiment planned. It needs real data, so the agent will find and download it before writing the final code.");
+        saveActive(run, signal);
+        await chooseDatasets(run, source.text, signal);
+      } else {
+        addEvent(run, "written", "Experiment code written. The original protocol and code are retained before execution.");
+      }
     }
     saveActive(run, signal);
     if (run.plan && run.status === "analyzing") await queueExecution(run, signal);
@@ -257,7 +266,8 @@ async function execute(run: Run, signal: AbortSignal) {
     store().savePoolSandbox(slot, workspace.id);
     run.sandbox = { id: workspace.id, egressRestricted: true, poolSlot: slot };
     saveActive(run, signal);
-    addEvent(run, "sandbox", `Using shared sandbox ${slot} with restricted external networking. The base workspace is preserved.`);
+    addEvent(run, "sandbox", `Using shared sandbox ${slot} with restricted external networking.`);
+    const dataLinks = run.datasets?.selected.length ? await prepareData(run, workspace.id, signal) : [];
     const outcome = await runAgentLoop({
       initialCode: run.plan!.pythonCode, maxAttempts: RESEARCH_LIMITS.maxAttempts, signal,
       execute: async (code, attempt) => {
@@ -270,7 +280,7 @@ async function execute(run: Run, signal: AbortSignal) {
         transition(run, "running");
         addEvent(run, "running", `Running Python in the sandbox · attempt ${attempt} of ${RESEARCH_LIMITS.maxAttempts}.`);
         saveActive(run, signal);
-        const output = await executeProject(code, run.id, attempt, signal, workspace!.id);
+        const output = await executeProject(code, run.id, attempt, signal, workspace!.id, dataLinks);
         return { ...output, ...(output.exitCode === 0 ? { validationError: measurementFeedback(output.stdout) } : {}) };
       },
       onAttempt: record => {
@@ -287,7 +297,7 @@ async function execute(run: Run, signal: AbortSignal) {
         saveActive(run, signal);
       },
       repair: async history => {
-        const revision = await riverJson(repairPrompt(run.plan!, history), repairSchema, signal);
+        const revision = await riverJson(repairPrompt(run.plan!, history, run.datasets?.manifest), repairSchema, signal);
         if (revision.action === "stop") return revision;
         const files = revision.files?.length ? revision.files : [{ path: ENTRYPOINT, content: revision.pythonCode! }];
         const problem = validateProject(files);
@@ -326,6 +336,102 @@ async function execute(run: Run, signal: AbortSignal) {
       store().save(current);
     }
   }
+}
+
+/** Searches for the plan's datasets and lets the agent choose the matching files. */
+async function chooseDatasets(run: Run, paperText: string, signal: AbortSignal) {
+  const requests = run.plan!.datasets!;
+  const names = requests.map(request => request.name).join(", ");
+  addEvent(run, "dataset_search", `Searching for ${names} in the paper's links, GitHub repositories, OpenML, Hugging Face and Zenodo.`);
+  saveActive(run, signal);
+  const found = await searchDatasets(requests, { paperText, repositoryUrl: run.repositoryUrl }, signal);
+  const total = Object.values(found).reduce((sum, list) => sum + list.length, 0);
+  addEvent(run, "dataset_found", total ? `Found ${total} candidate files: ${Object.entries(found).map(([name, list]) => `${list.length} for ${name}`).join(", ")}.` : `No downloadable files were found for ${names}.`);
+  saveActive(run, signal);
+  if (!total) {
+    run.datasets = { selected: [], unavailable: requests.map(request => ({ dataset: request.name, reason: "No downloadable source was found." })) };
+    transition(run, "blocked");
+    run.error = `The agent could not find a downloadable copy of ${names}. No experiment was run.`;
+    addEvent(run, "blocked", run.error);
+    return;
+  }
+  const choice = await riverJson(datasetChoicePrompt(run.plan!, describeCandidates(found)), datasetChoiceSchema, signal);
+  const all = Object.values(found).flat();
+  const selected: DatasetFile[] = [];
+  for (const pick of choice.choices) for (const id of pick.candidateIds) {
+    const candidate = all.find(item => item.id === id);
+    if (candidate && !selected.some(item => item.url === candidate.url) && selected.length < DATA_LIMITS.maxFilesPerExperiment) {
+      const { id: _id, detail: _detail, ...file } = candidate;
+      selected.push(file);
+    }
+  }
+  run.datasets = { selected, unavailable: choice.unavailable };
+  if (!selected.length) {
+    transition(run, "blocked");
+    run.error = `None of the files found matched ${names}: ${choice.unavailable.map(item => item.reason).join(" ") || "the agent rejected every candidate."} No experiment was run.`;
+    addEvent(run, "blocked", run.error);
+    return;
+  }
+  addEvent(run, "dataset_selected", `Chose ${selected.length} file${selected.length === 1 ? "" : "s"}: ${selected.map(file => file.title).join("; ")}.`);
+  if (choice.unavailable.length) addEvent(run, "dataset_missing", `Not found: ${choice.unavailable.map(item => `${item.dataset} (${item.reason})`).join("; ")}`);
+}
+
+/** Downloads the chosen data into the sandbox and, the first time, writes the project against it. */
+async function prepareData(run: Run, sandboxId: string, signal: AbortSignal) {
+  const data = run.datasets!;
+  const files: (FetchFile & { index: number })[] = [];
+  let planned = 0;
+  for (const [index, file] of data.selected.entries()) {
+    try {
+      const resolved = await resolveDownload(file.url, signal);
+      if (resolved.bytes && resolved.bytes > DATA_LIMITS.maxFileBytes) { addEvent(run, "dataset_missing", `Skipped ${file.title}: ${(resolved.bytes / 1e9).toFixed(1)} GB is over the size limit.`); continue; }
+      planned += resolved.bytes ?? 0;
+      if (planned > DATA_LIMITS.maxTotalBytes) { addEvent(run, "dataset_missing", `Skipped ${file.title}: the total download would exceed ${DATA_LIMITS.maxTotalBytes / 1e9} GB.`); continue; }
+      files.push({ index, key: createHash("sha256").update(file.url).digest("hex").slice(0, 20), url: resolved.url, filename: file.filename, link: `data/${datasetSlug(file.dataset)}/${file.filename}`, maxBytes: DATA_LIMITS.maxFileBytes });
+    } catch (error) { addEvent(run, "dataset_missing", `Could not reach ${file.title}: ${error instanceof Error ? error.message : "unknown error"}`); }
+  }
+  const hosts = [...new Set(files.map(file => new URL(file.url).hostname))];
+  addEvent(run, "dataset_fetch", `Downloading ${files.length} file${files.length === 1 ? "" : "s"} into the sandbox. The network opens only to ${hosts.join(", ") || "no hosts"}, and only for the download.`);
+  saveActive(run, signal);
+  const fetched = await fetchDatasets(sandboxId, files, signal);
+  const links: { link: string; target: string }[] = [];
+  const lines: string[] = [];
+  let bytes = 0;
+  for (const [position, item] of fetched.entries()) {
+    const request = files[position];
+    const file = data.selected[request.index];
+    if (!item.ok) { lines.push(`- ${file.title}: not available (${item.error}).`); continue; }
+    bytes += item.bytes;
+    file.bytes = item.bytes; file.sha256 = item.sha256; file.link = request.link;
+    links.push({ link: request.link, target: item.target });
+    lines.push(`- ${request.link} (${(item.bytes / 1e6).toFixed(1)} MB) — ${file.title}, from ${file.pageUrl}`);
+    if (item.extractedTarget) {
+      const folder = request.link.replace(/(\.tar)?\.(zip|tgz|tar|gz|bz2|xz)$/i, "").replace(/\.tar$/i, "") + "_files";
+      links.push({ link: folder, target: item.extractedTarget });
+      lines.push(`  Unpacked to ${folder}/ (${item.fileCount} files): ${item.listing.slice(0, 25).join(", ")}${(item.fileCount ?? 0) > 25 ? ", …" : ""}`);
+    }
+    if (item.error) lines.push(`  Note: ${item.error}`);
+    for (const view of item.previews) lines.push(`  Preview of ${view.path}: ${view.text.replace(/\n/g, "\n    ")}`);
+  }
+  if (!links.length) throw new Error("None of the chosen data files could be downloaded, so the experiment could not run. Try again later.");
+  data.manifest = lines.join("\n");
+  addEvent(run, "dataset_ready", `Downloaded and checked ${links.length} data item${links.length === 1 ? "" : "s"} (${(bytes / 1e6).toFixed(1)} MB). The network is locked again.`);
+  saveActive(run, signal);
+  if (!data.codeWritten) {
+    addEvent(run, "writing", "Writing the experiment against the downloaded data.");
+    saveActive(run, signal);
+    const written = await riverJson(dataCodePrompt(run.plan!, data.manifest), dataCodeSchema, signal);
+    const problem = validateProject(written.files);
+    if (problem) throw new Error(`The agent's project was rejected: ${problem}`);
+    run.plan!.pythonCode = bundleProject(written.files);
+    run.plan!.dataset = written.dataset;
+    if (written.notes) run.plan!.limitations = [...run.plan!.limitations.slice(0, 14), written.notes];
+    run.workingCode = { code: run.plan!.pythonCode, attempt: 1, updatedAt: new Date().toISOString() };
+    data.codeWritten = true;
+    addEvent(run, "written", "Experiment code written against the real data. The original protocol is retained.");
+    saveActive(run, signal);
+  }
+  return links;
 }
 
 function hashCode(code: string) { return createHash("sha256").update(code).digest("hex"); }

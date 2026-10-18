@@ -33,6 +33,7 @@ export function markdownReport(run: Run) {
     "## Scope", inline(run.plan?.scope || "No experiment protocol available"),
     inline(run.plan?.hypothesis || "No hypothesis generated."),
     "## Protocol", inline(run.plan?.method || "Not generated."),
+    ...(run.datasets?.selected.length ? ["## Data sources", run.datasets.selected.map(file => `- ${inline(file.title)}: ${inline(file.pageUrl)}${file.bytes ? `, ${(file.bytes / 1e6).toFixed(1)} MB` : ""}${file.sha256 ? `, SHA-256 ${inline(file.sha256)}` : ""}${file.link ? `, read from ${inline(file.link)}` : ", not downloaded"}`).join("\n"), ...(run.datasets.unavailable.length ? [`Not found: ${run.datasets.unavailable.map(item => inline(`${item.dataset} (${item.reason})`)).join("; ")}`] : [])] : []),
     `Dataset: ${inline(run.plan?.dataset || "Not available")}`,
     "## Evidence", inline(run.result?.summary || run.error || "This run has not produced measurements."),
     `| Metric | Reported | Observed |\n|---|---|---|\n${(run.result?.metrics || []).map(metric => `| ${inline(metric.name)} | ${inline(metric.reported || "Not compared")} | ${inline(metric.observed)} |`).join("\n")}`,

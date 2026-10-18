@@ -2,6 +2,7 @@ import { CreateosSandboxClient, type Sandbox } from "@nodeops-createos/sandbox";
 import { createosKey, SANDBOX_ID, SANDBOX_URL } from "./config";
 import { RESEARCH_LIMITS } from "../capabilities";
 import { parseProject, validateProject } from "../project";
+import { INSPECT_DATA_PY } from "./inspect-data";
 
 // An empty CreateOS allowlist means OPEN egress. A single reserved TEST-NET
 // address keeps the host policy restrictive without exposing package registries.
@@ -250,7 +251,7 @@ async function createPoolSandbox(client: CreateosSandboxClient, slot: number, si
   await onProgress(`Creating a fresh shared sandbox ${slot}.`);
   const create = () => client.createSandbox({
     shape: SANDBOX_SHAPE, rootfs: SANDBOX_ROOTFS, ingress_enabled: false, egress: EXPERIMENT_EGRESS,
-    envs: { [poolMarker(slot)]: "1" }, auto_pause_after_seconds: POOL_IDLE_SECONDS,
+    envs: { [poolMarker(slot)]: "1" }, auto_pause_after_seconds: POOL_IDLE_SECONDS, disk_mib: 40_960,
   }, request);
   try { return await create(); }
   catch (error) {
@@ -361,10 +362,14 @@ export function friendlySandboxError(message: string): string {
 const RUNS_ROOT = "/tmp/trace-runs";
 const PYTHON_RECORD = "/var/lib/trace-python";
 const SPLIT = "__TRACE_EXIT__";
+// The image installs Python 3.13 and its packages under root's home, which
+// other users cannot read. Once per sandbox, open only that install (and
+// traverse-only access to its parent folders) and record its interpreter.
+const EXPOSE_PYTHON = `[ -s ${PYTHON_RECORD} ] || { PREFIX=$(python3 -c 'import sys; print(sys.prefix)') && d="$PREFIX" && while [ "$d" != "/" ]; do chmod o+x "$d"; d=$(dirname "$d"); done && chmod -R o+rX "$PREFIX" && python3 -c 'import os, sys; print(os.path.realpath(sys.executable))' > ${PYTHON_RECORD}.tmp && mv ${PYTHON_RECORD}.tmp ${PYTHON_RECORD}; }`;
 
 function shellQuote(value: string) { return `'${value.replaceAll("'", `'"'"'`)}'`; }
 
-export async function executeProject(bundle: string, runId: string, attempt: number, signal: AbortSignal, sandboxId: string) {
+export async function executeProject(bundle: string, runId: string, attempt: number, signal: AbortSignal, sandboxId: string, dataLinks: { link: string; target: string }[] = []) {
   const key = createosKey();
   if (!key) throw new Error("The sandbox is not configured on the server.");
   if (!/^[0-9a-f-]{36}$/.test(runId)) throw new Error("Invalid run identifier.");
@@ -379,15 +384,13 @@ export async function executeProject(bundle: string, runId: string, attempt: num
 
   const uid = 20_000 + Math.floor(Math.random() * 40_000);
   const directory = `${RUNS_ROOT}/${runId}/a${attempt}`;
-  // The image installs Python 3.13 and its packages under root's home, which
-  // other users cannot read. Once per sandbox, open only that install (and
-  // traverse-only access to its parent folders) and record its interpreter.
-  const exposePython = `[ -s ${PYTHON_RECORD} ] || { PREFIX=$(python3 -c 'import sys; print(sys.prefix)') && d="$PREFIX" && while [ "$d" != "/" ]; do chmod o+x "$d"; d=$(dirname "$d"); done && chmod -R o+rX "$PREFIX" && python3 -c 'import os, sys; print(os.path.realpath(sys.executable))' > ${PYTHON_RECORD}.tmp && mv ${PYTHON_RECORD}.tmp ${PYTHON_RECORD}; }`;
   const prepare = [
-    exposePython,
+    EXPOSE_PYTHON,
     `mkdir -p ${RUNS_ROOT} && chmod 711 ${RUNS_ROOT}`,
     `rm -rf ${shellQuote(directory)} && mkdir -p ${shellQuote(directory)}`,
     ...[...new Set(files.map(file => file.path.split("/").slice(0, -1).join("/")).filter(Boolean))].map(folder => `mkdir -p ${shellQuote(`${directory}/${folder}`)}`),
+    // Fetched datasets are linked read-only into the project folder under data/.
+    ...dataLinks.filter(item => /^data\/[A-Za-z0-9_./-]+$/.test(item.link) && !item.link.includes("..") && item.target.startsWith(`${DATA_ROOT}/`)).map(item => `mkdir -p ${shellQuote(`${directory}/${item.link.split("/").slice(0, -1).join("/")}`)} && ln -sfn ${shellQuote(item.target)} ${shellQuote(`${directory}/${item.link}`)}`),
   ].join(" && ");
   await box.runCommand("sh", ["-c", prepare], { signal, timeoutMs: 120_000 });
   for (const file of files) await box.files.upload(`${directory}/${file.path}`, file.content, { signal, timeoutMs: 20_000 });
@@ -405,7 +408,7 @@ export async function executeProject(bundle: string, runId: string, attempt: num
   ].map(shellQuote).join(" ");
   const script = [
     `cd ${shellQuote(directory)}`,
-    `chown -R ${uid}:${uid} . && chmod 700 .`,
+    `chown -hR ${uid}:${uid} . && chmod 700 .`,
     `PY=$(cat ${PYTHON_RECORD} 2>/dev/null); [ -x "$PY" ] || PY=python3`,
     `prlimit ${limits} -- setpriv --reuid=${uid} --regid=${uid} --clear-groups --no-new-privs -- timeout --signal=TERM --kill-after=5 ${seconds} env -i ${environment} "$PY" -E -s main.py > .stdout 2> .stderr`,
     "code=$?",
@@ -432,4 +435,78 @@ export async function executeProject(bundle: string, runId: string, attempt: num
   } finally {
     if (!confirmedFinished) await holdExecutionLease(started, Date.now(), undefined, (seconds + 10) * 1000);
   }
+}
+
+// ---------------------------------------------------------------------------
+// Dataset fetch. Trusted code, never the experiment, downloads chosen files.
+// Egress opens only to the exact download hosts and is restored and verified
+// before any experiment code runs. Files are cached per sandbox by URL.
+// ---------------------------------------------------------------------------
+
+export const DATA_ROOT = "/var/cache/trace-data";
+const DATA_UID = 19_999;
+
+export type FetchFile = { key: string; url: string; filename: string; link: string; maxBytes: number };
+export type FetchedFile = { key: string; ok: boolean; bytes: number; sha256?: string; error?: string; extracted?: boolean; fileCount?: number; listing: string[]; previews: { path: string; text: string }[]; target: string; extractedTarget?: string };
+
+export async function fetchDatasets(sandboxId: string, files: FetchFile[], signal: AbortSignal): Promise<FetchedFile[]> {
+  if (!files.length) return [];
+  const box = await sandboxClient().getSandbox(sandboxId, { ...CONTROL_REQUEST, signal });
+  if (box.status !== "running") throw new SandboxUnavailableError();
+  for (const file of files) {
+    if (!/^[a-f0-9]{20}$/.test(file.key) || !/^[A-Za-z0-9._-]{1,120}$/.test(file.filename) || !/^https:\/\//.test(file.url)) throw new Error("A dataset file was rejected before download.");
+  }
+  const hosts = [...new Set(files.map(file => new URL(file.url).hostname))];
+  const downloads = files.map(file => {
+    const folder = `${DATA_ROOT}/${file.key}`;
+    const path = `${folder}/${file.filename}`;
+    return `if [ -f ${folder}/.complete ]; then echo "cached ${file.key}"; else rm -rf ${folder} && mkdir -p ${folder} && curl -fsSL --proto =https --tlsv1.2 --max-filesize ${file.maxBytes} --retry 2 --connect-timeout 20 -m 900 -A TraceResearchAgent -o ${shellQuote(path)} ${shellQuote(file.url)} && sha256sum ${shellQuote(path)} | cut -d' ' -f1 > ${folder}/.sha256 && touch ${folder}/.complete && echo "fetched ${file.key}" || echo "failed ${file.key} $?"; fi`;
+  });
+  let log = "";
+  try {
+    await box.setEgress(hosts.map(host => `${host}:443`), { ...CONTROL_REQUEST, signal });
+    const { result } = await box.runCommand("sh", ["-c", [`mkdir -p ${DATA_ROOT} && chmod 755 ${DATA_ROOT}`, ...downloads].join("; ")], { signal, timeoutMs: 20 * 60_000 });
+    log = result.stdout + result.stderr;
+  } finally {
+    // Always lock the network again; refuse to continue if that cannot be confirmed.
+    await box.setEgress(EXPERIMENT_EGRESS, CONTROL_REQUEST);
+    const policy = await box.getEgress(CONTROL_REQUEST);
+    if (policy.egress.length !== EXPERIMENT_EGRESS.length || !EXPERIMENT_EGRESS.every(rule => policy.egress.includes(rule))) {
+      await retireSandbox(box);
+      throw new Error("The sandbox network could not be locked again after downloading data. No experiment was executed.");
+    }
+  }
+
+  const ready = files.filter(file => log.includes(`fetched ${file.key}`) || log.includes(`cached ${file.key}`));
+  const failed = files.filter(file => !ready.includes(file));
+  let inspected: any[] = [];
+  if (ready.length) {
+    const entries = ready.map(file => ({ key: file.key, dir: `${DATA_ROOT}/${file.key}`, filename: file.filename }));
+    await box.files.upload("/var/lib/trace-inspect.py", INSPECT_DATA_PY, { signal, timeoutMs: 20_000 });
+    const owned = ready.map(file => `${DATA_ROOT}/${file.key}`).map(shellQuote).join(" ");
+    const script = [
+      EXPOSE_PYTHON,
+      "chmod 644 /var/lib/trace-inspect.py",
+      `chown -hR ${DATA_UID}:${DATA_UID} ${owned}`,
+      `PY=$(cat ${PYTHON_RECORD} 2>/dev/null); [ -x "$PY" ] || PY=python3`,
+      `prlimit --as=3221225472 --fsize=6442450944 --nproc=64 -- setpriv --reuid=${DATA_UID} --regid=${DATA_UID} --clear-groups --no-new-privs -- timeout 600 env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp "$PY" -E -s /var/lib/trace-inspect.py ${shellQuote(JSON.stringify(entries))}`,
+      "code=$?",
+      `pkill -KILL -u ${DATA_UID} 2>/dev/null; chmod -R a+rX ${owned}`,
+      "exit $code",
+    ].join("; ");
+    const { result } = await box.runCommand("sh", ["-c", script], { signal, timeoutMs: 12 * 60_000 });
+    try { inspected = JSON.parse(result.stdout.trim().split("\n").at(-1) || "[]"); } catch { inspected = []; }
+    const sums = await box.runCommand("sh", ["-c", ready.map(file => `printf '%s %s\\n' ${file.key} "$(cat ${DATA_ROOT}/${file.key}/.sha256 2>/dev/null)"`).join("; ")], { signal, timeoutMs: 20_000 });
+    for (const line of sums.result.stdout.split("\n")) {
+      const [key, sha] = line.trim().split(" ");
+      const item = inspected.find(entry => entry.key === key);
+      if (item && sha) item.sha256 = sha;
+    }
+  }
+  return files.map(file => {
+    const item = inspected.find(entry => entry.key === file.key);
+    const target = `${DATA_ROOT}/${file.key}/${file.filename}`;
+    if (failed.includes(file) || !item) return { key: file.key, ok: false, bytes: 0, error: failed.includes(file) ? "download failed" : "could not be inspected", listing: [], previews: [], target };
+    return { key: file.key, ok: true, bytes: item.bytes, sha256: item.sha256, error: item.error, extracted: item.extracted, fileCount: item.fileCount, listing: item.listing ?? [], previews: item.previews ?? [], target, extractedTarget: item.extracted ? `${DATA_ROOT}/${file.key}/extracted` : undefined };
+  });
 }
