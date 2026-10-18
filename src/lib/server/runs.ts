@@ -125,7 +125,7 @@ export function createRun(input: Record<string, unknown>, ownerId: string) {
   addEvent(run, "analyzing", "Reading source evidence, then writing, running and repairing one focused experiment automatically.");
   if (!riverKey() || !configuration().createosConfigured) {
     transition(run, "blocked");
-    run.error = !riverKey() ? "River is not configured. Add RIVER_API_KEY to .env.local and restart the server. No model or sandbox request was made." : "CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server. No model or sandbox request was made.";
+    run.error = !riverKey() ? "The agent API is not configured on the server. No model or sandbox request was made." : "CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server. No model or sandbox request was made.";
     addEvent(run, "blocked", run.error); store().save(run); return run;
   }
   store().save(run);

@@ -8,6 +8,7 @@ import type { OrbState } from "thinking-orbs";
 import { PlatformProof } from "./platform-proof";
 import { RESEARCH_LIMITS } from "@/lib/capabilities";
 import { AgentWorkbench } from "./agent-workbench";
+import { AgentConsole } from "./agent-console";
 import { parseMeasurements } from "@/lib/measurements";
 
 export const ACTIVE_STATUSES: RunStatus[] = ["analyzing", "queued", "running", "repairing"];
@@ -135,6 +136,7 @@ export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () 
     <div key={key} className="process-copy stage-enter" role="status" aria-live="polite" aria-atomic="true"><h1>{phase.title}</h1><p>{phase.description}</p></div></div>
     {run && <>
       <ol className="phase-trail" aria-label="Investigation progress">{["Read", "Write", run.status === "repairing" ? "Repair" : "Run"].map((label, index) => <li key={index} aria-current={index === phase.step ? "step" : undefined} className={index < phase.step ? "phase-done" : ""}>{index < phase.step ? <Check size={10} aria-hidden="true" /> : <span aria-hidden="true" />}{label}</li>)}</ol>
+      <AgentConsole key={`console-${run.id}`} run={run} />
       <AgentWorkbench key={run.id} run={run} />
       <details className="agent-inspection product-disclosure"><summary>Research context<ChevronDown size={13} aria-hidden="true" /></summary><div className="product-disclosure-body">
         {run.plan && <><p className="agent-question">{run.plan.summary || run.plan.title}</p><p>{SCOPE_LABELS[run.plan.scope]}. This is the question Trace is testing.</p></>}
@@ -147,8 +149,8 @@ export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () 
   </section>;
 }
 
-export function CreditAlert({ title = "Out of River credit" }: { title?: string }) {
-  return <div className="credit-alert" role="alert"><span className="credit-alert-icon">!</span><div><strong>{title}</strong><p>The AI model provider has no credit left, so new investigations can't plan or write code. The site owner needs to top up River. Saved reports are still available.</p></div></div>;
+export function CreditAlert({ title = "Out of agent API credit" }: { title?: string }) {
+  return <div className="credit-alert" role="alert"><span className="credit-alert-icon">!</span><div><strong>{title}</strong><p>The agent's AI API has no credit left, so new investigations can't plan or write code. The site owner needs to top up the API credit. Saved reports are still available.</p></div></div>;
 }
 
 export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }: {

@@ -83,7 +83,7 @@ function saveRejectedResponse(content: string, error: ModelResponseError, metada
 export const RIVER_OUT_OF_CREDIT = "river_out_of_credit";
 export class RiverCreditError extends Error {
   readonly code = RIVER_OUT_OF_CREDIT;
-  constructor() { super("River is out of credit, so the agent could not plan or write code. The site owner needs to add credit in the River console. No experiment was run."); }
+  constructor() { super("The agent API is out of credit, so the agent could not plan or write code. The site owner needs to top up the API credit. No experiment was run."); }
 }
 
 /** River signals exhausted credit with 402, or with a billing message on other statuses. */
@@ -95,7 +95,7 @@ export function isRiverCreditResponse(status: number, body: string) {
 
 export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const key = riverKey();
-  if (!key) throw new Error("River is not configured. Add RIVER_API_KEY to the server environment, then start a new run.");
+  if (!key) throw new Error("The agent API is not configured on the server. No experiment was run.");
   const body = JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], reasoning_effort: "high", max_tokens: 16_384, response_format: { type: "json_object" } });
   let response: Response | undefined;
   // Rate limits (429) and brief overloads (503) are common when several
@@ -119,12 +119,12 @@ export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?
       signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason ?? new Error("Run cancelled.")); }, { once: true });
     });
   }
-  if (!response!.ok) throw new Error(response!.status === 429 ? "River is rate-limiting requests right now. Wait a minute, then try again." : `River returned HTTP ${response!.status}. Check model access and balance in the River console.`);
+  if (!response!.ok) throw new Error(response!.status === 429 ? "The agent API is busy right now. Wait a minute, then try again." : `The agent API returned HTTP ${response!.status}. Try again shortly.`);
   setRiverOutOfCredit(false);
   const data = await response!.json();
   const choice = data?.choices?.[0];
   if (choice?.finish_reason === "length") throw new Error("The model exhausted its response budget. No experiment was executed.");
-  if (typeof choice?.message?.content !== "string") throw new Error("River returned no structured answer.");
+  if (typeof choice?.message?.content !== "string") throw new Error("The agent API returned no structured answer.");
   try { return parseModelResponse(choice.message.content, schema); }
   catch (error) {
     if (!(error instanceof ModelResponseError)) throw error;
