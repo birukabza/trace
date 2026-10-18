@@ -56,3 +56,6 @@ Thumbs.db
 
 .vercel
 .env*
+
+# The empty environment template is the only public env file
+!/.env.example
