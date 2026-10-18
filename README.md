@@ -1,159 +1,148 @@
-# Trace
+<div align="center">
 
-Trace is a research verification agent. Give it an arXiv paper or a public GitHub repository, and it reads the source, writes a focused numerical experiment, and runs its code in an isolated CreateOS Sandbox.
+# 🔬 Trace
 
-When execution fails or measurements are missing, the agent can inspect the feedback, revise its code, and run it again. Every attempt stays available for review.
+**Paste a paper. Watch an agent test its claims.**
 
-## What it does
+Trace reads an arXiv paper or GitHub repo, writes a focused experiment,
+runs it in an isolated sandbox, and fixes its own code when it fails.
 
-- Extracts testable claims with supporting source excerpts.
-- Generates Python experiments and starts execution automatically.
-- Shows the current code, actual output, and changes between attempts.
-- Attempts implementation repairs using execution and output-validation feedback.
-- Keeps private investigation history for each signed-in user.
-- Exports reports containing the protocol, code, measurements, errors, and limitations.
+[![Live demo](https://img.shields.io/badge/demo-trace--two--livid.vercel.app-000?style=for-the-badge&logo=vercel)](https://trace-two-livid.vercel.app)
 
-## Supported experiments
+![Next.js](https://img.shields.io/badge/Next.js-16-000?logo=nextdotjs)
+![TypeScript](https://img.shields.io/badge/TypeScript-5-3178c6?logo=typescript&logoColor=white)
+![Node](https://img.shields.io/badge/Node-24-5fa04e?logo=nodedotjs&logoColor=white)
+![Supabase](https://img.shields.io/badge/Auth-Supabase-3ecf8e?logo=supabase&logoColor=white)
+![CreateOS](https://img.shields.io/badge/Sandbox-CreateOS-ff6b35)
+![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen)
 
-Trace currently supports small CPU numerical checks and reduced experiments using Python and NumPy. Each investigation has a budget of three execution attempts, with a 60-second limit per attempt.
+</div>
 
-It reads arXiv HTML or extracts text from PDFs. Downloads are limited to 12 MB, with up to 80,000 extracted characters per paper. When an author repository is included, the input budget is 60,000 paper characters and 20,000 README characters. GitHub input supplies README context; repository code and dependencies are not downloaded or executed.
+---
 
-Scanned PDFs, GPU training, large dataset downloads, and full large-model benchmark reproduction are outside the current scope. A successful execution is recorded as partial verification, not proof that a paper's claim is correct.
+## ✨ How it works
 
-## How it works
-
-The Next.js frontend handles the workspace and Supabase email/password sessions. A separate Node.js backend verifies the user's identity, manages investigations, calls River for code generation and repair, and executes Python through CreateOS. SQLite stores investigation records and execution evidence.
-
-Stripe Projects provisions the CreateOS integration and supplies its credentials. Each live investigation uses an isolated fork of a configured base sandbox, with restricted external networking and disabled ingress. Generated programs run with limits on imports, memory, execution time, and output. The experiment workspace pauses after the run.
-
-The interface uses React, TypeScript, Shaders, and thinking-orbs. The model is currently configured as `zai-org/GLM-5.3-Flash` through River.
-
-## Local setup
-
-### 1. Install dependencies
-
-Use Node.js 24 and npm. On Windows, you can run the development services in WSL.
-
-```bash
-git clone https://github.com/birukabza/trace.git
-cd trace
-npm ci
+```mermaid
+flowchart LR
+    A[📄 Paper or repo URL] --> B[🧠 Extract testable claims]
+    B --> C[✍️ Write Python experiment]
+    C --> D[⚙️ Run in CreateOS sandbox]
+    D -->|fails or no measurements| E[🔧 Diagnose and repair]
+    E --> D
+    D -->|success| F[📊 Evidence report]
 ```
 
-### 2. Connect CreateOS
+| | |
+|---|---|
+| 🎯 **Grounded claims** | Every claim quotes an exact excerpt from the source. |
+| 🔁 **Self-repair** | Up to 3 attempts, each one learning from the last error. |
+| 🔒 **Isolated runs** | Restricted network, no ingress, allow-listed imports, memory and time caps. |
+| 🚦 **Fair queue** | 3 shared sandboxes; users see their place in line. |
+| 📥 **Exportable** | Download the protocol, code, output and limitations as a report. |
 
-Install and authenticate the Stripe CLI with its Projects plugin, then connect the CreateOS service from the repository root:
+> [!NOTE]
+> A successful run is **partial verification**, not proof a claim is true.
+
+## 🏗️ Architecture
+
+```mermaid
+flowchart LR
+    U((User)) --> FE["Next.js frontend<br/>Vercel"]
+    FE -- auth --> SB[(Supabase)]
+    FE -- proxy --> BE["Node backend<br/>Railway + SQLite"]
+    BE --> RV["River LLM<br/>GLM-5.3-Flash"]
+    BE --> CO["CreateOS sandbox pool<br/>3 × Python + NumPy"]
+```
+
+## 🧪 What it can test
+
+| ✅ Good fit | ❌ Out of scope |
+|---|---|
+| Small CPU numerical checks | GPU training |
+| Optimizer, init and normalization math | Large dataset downloads |
+| Reduced toy versions of experiments | Full benchmark reproduction |
+| arXiv HTML or text PDFs | Scanned PDFs |
+
+**Try it with:** [Adam](https://arxiv.org/abs/1412.6980) · [Attention Is All You Need](https://arxiv.org/abs/1706.03762) · [Layer Norm](https://arxiv.org/abs/1607.06450)
+
+## 🚀 Quick start
+
+**You need:** Node 24, a [Supabase](https://supabase.com) project, a [River](https://river.ai) API key, and a CreateOS base sandbox with Python 3 and NumPy.
 
 ```bash
+git clone https://github.com/birukabza/trace.git && cd trace
+npm ci
+
+# CreateOS credentials via Stripe Projects (writes .env)
 stripe projects init
 stripe projects add createos/project
 stripe projects env --pull
+
+cp .env.example .env.local   # fill in Supabase, River and sandbox ID
+npm run dev                  # web on :3000, backend on :4000
 ```
 
-Choose the plan appropriate for your account. Stripe Projects writes the generated credentials to `.env`.
+<details>
+<summary><b>🔑 Environment variables</b></summary>
 
-Create an EU CreateOS base sandbox with Python 3 and NumPy installed, and keep its ID for the next step. The sandbox filesystem must contain no credentials or private files because investigation forks copy that filesystem.
+| Variable | Where | What |
+|---|---|---|
+| `NEXT_PUBLIC_SUPABASE_URL` | both | Supabase project URL |
+| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | both | Supabase publishable key |
+| `NEXT_PUBLIC_APP_URL` | frontend | Public frontend URL |
+| `TRACE_BACKEND_URL` | frontend | Backend URL (server-only) |
+| `RIVER_API_KEY` | backend | River API key |
+| `CREATEOS_PROJECT_API_KEY` | backend | CreateOS key from Stripe Projects |
+| `CREATEOS_SANDBOX_ID` | backend | Base sandbox to fork the pool from |
+| `TRACE_SANDBOX_POOL_SIZE` | backend | Shared sandboxes, default `3` |
+| `TRACE_DATA_DIR` | backend | SQLite location, `/data` in production |
+| `FRONTEND_URL` | backend | Allowed frontend origin |
 
-### 3. Configure authentication and environment variables
+In Supabase, enable email/password auth and add `http://localhost:3000/auth/callback**` as a redirect URL.
 
-Create a Supabase project. Enable email/password authentication and email confirmation. Under Authentication URL Configuration, set:
+> [!WARNING]
+> The base sandbox is copied into every worker. Keep credentials and private files out of it.
 
-- Site URL: `http://localhost:3000`
-- Allowed redirect URL: `http://localhost:3000/auth/callback**`
+</details>
 
-Copy the environment template:
+<details>
+<summary><b>☁️ Deploy</b></summary>
+
+**Backend → Railway**
+1. Deploy the repo with `Dockerfile.backend`.
+2. Attach a volume at `/data`, keep 1 replica, health check `/healthz`.
+3. Set the backend variables above, with `NODE_ENV=production`.
+
+**Frontend → Vercel**
+1. Import the repo as a Next.js project on Node 24.x.
+2. Set the frontend variables, pointing `TRACE_BACKEND_URL` at Railway.
+3. Add your Vercel domain to Supabase's Site URL and redirect URLs.
+
+</details>
+
+## 🛠️ Scripts
 
 ```bash
-cp .env.example .env.local
+npm run dev         # frontend + backend with reload
+npm test            # test suite
+npm run typecheck   # TypeScript
+npm run verify      # everything: types, tests, both builds
 ```
 
-Fill in these values in `.env.local`:
+## 🤝 Contributing
 
-```dotenv
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=your_publishable_key
-NEXT_PUBLIC_APP_URL=http://localhost:3000
-RIVER_API_KEY=your_river_key
-CREATEOS_SANDBOX_ID=your_base_sandbox_id
-TRACE_BACKEND_URL=http://127.0.0.1:4000
-FRONTEND_URL=http://localhost:3000
-```
+Issues and pull requests are welcome.
 
-Both development services load environment files using Next.js precedence, including the Stripe Projects-managed `.env`. Keep the River key in `.env.local`; do not overwrite the generated `.env` or add an empty `CREATEOS_PROJECT_API_KEY` override.
+1. Fork the repo and create a branch.
+2. Make your change and run `npm run verify`.
+3. Open a pull request describing what changed and why.
 
-Supabase handles password hashing and account verification. No Supabase service-role key or application database tables are required. SQLite stores local investigation data in `data/`.
+Good first areas: new source types, richer reports, and more numerical checks.
 
-### 4. Start Trace
+---
 
-```bash
-npm run dev
-```
+<div align="center">
 
-This starts the frontend on port 3000 and the backend on port 4000. Open [localhost:3000](http://localhost:3000), create an account, confirm your email, and sign in.
+Built for the CreateOS × Stripe hackathon · ⭐ Star the repo if it helped you
 
-Paste a paper or repository URL and select **Investigate**. Follow the generated code and captured output; open **Changes** when a revision is written. Cancel an active investigation or download its report from the workspace.
-
-Investigations are private to their verified owner. One investigation per account can be active at a time, with up to three active across the service. Sandbox execution is serialized. The recorded example is a preview of saved evidence and does not start a live experiment.
-
-## Deployment
-
-Deploy the frontend to Vercel and the persistent backend to Railway. The frontend proxies authenticated requests to the backend; long-running experiments execute in the backend process.
-
-### Railway backend
-
-Use the repository root and `Dockerfile.backend`. Attach a persistent volume at `/data`, use one always-on replica, and set the health check to `/healthz`. Confirm these settings in Railway; `railway.toml` also records them.
-
-Set the service variables:
-
-| Variable | Value |
-| --- | --- |
-| `NODE_ENV` | `production` |
-| `TRACE_DATA_DIR` | `/data` |
-| `NEXT_PUBLIC_SUPABASE_URL` | Your Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | Your Supabase publishable key |
-| `RIVER_API_KEY` | Your River API key |
-| `CREATEOS_SANDBOX_ID` | Your EU base sandbox ID |
-| `CREATEOS_PROJECT_API_KEY` | Your Stripe Projects-provisioned CreateOS key |
-| `FRONTEND_URL` | Your frontend HTTPS origin |
-
-Railway supplies `PORT`. Keep the Docker entrypoint and command, generate the service's public HTTPS domain, and back up its volume. The health check is public; investigation APIs require a verified Supabase session.
-
-### Vercel frontend
-
-Import the repository with these settings:
-
-- Root directory: repository root (`./`)
-- Framework: Next.js
-- Node.js: 24.x
-- Build command: `npm run build`
-- Output directory: framework default (`.next`)
-
-Set the frontend variables:
-
-| Variable | Value |
-| --- | --- |
-| `NEXT_PUBLIC_SUPABASE_URL` | The same Supabase project URL |
-| `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY` | The same publishable key |
-| `NEXT_PUBLIC_APP_URL` | Your frontend HTTPS origin |
-| `TRACE_BACKEND_URL` | Your Railway backend HTTPS origin |
-
-Keep `TRACE_BACKEND_URL` server-only. River and CreateOS credentials belong on the backend, not the frontend deployment.
-
-Once the frontend domain is available, update Railway's `FRONTEND_URL`. In Supabase, set the Site URL to that domain and allow `https://your-domain/auth/callback**`. Configure email delivery for your users, then verify account creation, confirmation, sign-in, password reset, and a live investigation.
-
-SQLite uses the Railway volume; no separate database service is needed. Interrupted investigations retain their evidence and are not automatically rerun after a backend restart.
-
-## Development commands
-
-```bash
-npm run typecheck       # TypeScript checks
-npm test                # Automated tests
-npm run build           # Production frontend
-npm run build:backend   # Production backend
-npm run verify          # All checks and builds
-```
-
-Use `npm run dev:frontend` or `npm run dev:backend` to start either service separately. Built services run with `npm start` and `npm run start:backend`; provide their environment variables when starting them in production.
-
-Local credentials, application data, generated experiment artifacts, and build output are excluded from Git.
+</div>
