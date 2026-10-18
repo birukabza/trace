@@ -206,18 +206,22 @@ export async function holdExecutionLease(started: number, now = Date.now(), wait
 
 export const POOL_SIZE = Math.min(5, Math.max(1, Number(process.env.TRACE_SANDBOX_POOL_SIZE) || 3));
 const poolMarker = (slot: number) => `TRACE_POOL_SLOT_${slot}`;
+const SANDBOX_SHAPE = process.env.TRACE_SANDBOX_SHAPE || "s-2vcpu-4gb";
+const SANDBOX_ROOTFS = process.env.TRACE_SANDBOX_ROOTFS || "devbox:1";
 const LIVE_STATUSES = new Set(["creating", "forking", "running", "resuming", "pausing", "paused"]);
+
+const isPoolSandbox = (box: Sandbox, slot: number) => box.id !== SANDBOX_ID && LIVE_STATUSES.has(box.status) && Boolean(box.data.envs?.includes(poolMarker(slot)));
 
 async function findPoolSandbox(client: CreateosSandboxClient, slot: number, knownId: string | undefined, signal: AbortSignal): Promise<Sandbox | undefined> {
   const request = { ...CONTROL_REQUEST, signal };
   if (knownId) {
     try {
       const box = await client.getSandbox(knownId, request);
-      if (LIVE_STATUSES.has(box.status) && box.data.forked_from === SANDBOX_ID && box.data.envs?.includes(poolMarker(slot))) return box;
+      if (isPoolSandbox(box, slot)) return box;
     } catch { /* Fall back to discovery below. */ }
   }
   const boxes = await client.listSandboxes(request);
-  return boxes.find(box => LIVE_STATUSES.has(box.status) && box.data.forked_from === SANDBOX_ID && box.data.envs?.includes(poolMarker(slot)));
+  return boxes.find(box => isPoolSandbox(box, slot));
 }
 
 /** Destroys per-run forks left by the previous one-fork-per-run design. They hold CreateOS capacity the pool needs. */
@@ -236,41 +240,86 @@ export async function releaseLegacyForks(signal: AbortSignal): Promise<number> {
   return released;
 }
 
-async function forkPoolSandbox(client: CreateosSandboxClient, slot: number, signal: AbortSignal, onProgress: (message: string) => void | Promise<void>): Promise<Sandbox> {
+/**
+ * Creates a fresh shared sandbox from the stock image, which already ships
+ * Python 3.13 with numpy, scipy, scikit-learn, pandas, numba and friends.
+ * Creating is fast and does not depend on restoring a paused snapshot.
+ */
+async function createPoolSandbox(client: CreateosSandboxClient, slot: number, signal: AbortSignal, onProgress: (message: string) => void | Promise<void>): Promise<Sandbox> {
   const request = { ...CONTROL_REQUEST, signal };
-  const wait = { ...CONTROL_WAIT, signal };
-  const base = await client.getSandbox(SANDBOX_ID, request);
-  const restoreBase = base.status === "running" || base.status === "resuming";
-  try {
-    await onProgress(`Creating shared sandbox ${slot}. This happens once and takes about a minute.`);
-    if (base.status === "resuming") await base.waitUntilRunning(wait);
-    if (base.status === "running") await base.pause(request);
-    if (base.status !== "paused") await base.waitUntilPaused(wait);
-    const fork = () => base.fork({ start_paused: true, ingress_enabled: false, egress: EXPERIMENT_EGRESS, envs: { [poolMarker(slot)]: "1" } }, request);
-    let child: Sandbox;
-    try { child = await fork(); }
-    catch (error) {
-      if (!isSandboxQuotaError(error)) throw error;
-      await onProgress("Sandbox capacity is full. Releasing old workspaces.");
-      if (!(await releaseLegacyForks(signal))) throw new Error("Sandbox capacity is full right now. Try again in a few minutes.");
-      child = await fork();
-    }
-    await child.waitUntilPaused(wait);
-    return child;
-  } finally { if (restoreBase) await resumeWorkspace(base); }
+  await onProgress(`Creating a fresh shared sandbox ${slot}.`);
+  const create = () => client.createSandbox({
+    shape: SANDBOX_SHAPE, rootfs: SANDBOX_ROOTFS, ingress_enabled: false, egress: EXPERIMENT_EGRESS,
+    envs: { [poolMarker(slot)]: "1" }, auto_pause_after_seconds: POOL_IDLE_SECONDS,
+  }, request);
+  try { return await create(); }
+  catch (error) {
+    if (!isSandboxQuotaError(error)) throw error;
+    await onProgress("Sandbox capacity is full. Releasing old workspaces.");
+    if (!(await releaseLegacyForks(signal))) throw new Error("Sandbox capacity is full right now. Try again in a few minutes.");
+    return create();
+  }
 }
 
-/** Returns a running, egress-verified pool sandbox for the slot, creating it if needed. */
+/** Raised when no shared sandbox can be started; the message is shown to users. */
+export class SandboxUnavailableError extends Error {
+  constructor() { super("The sandbox did not start, so the experiment could not run. Your experiment is saved. Press \"Run it again\" in a minute."); }
+}
+
+const START_TIMEOUT_MS = 100_000;
+// Long enough to stay awake while the agent repairs code between attempts.
+const POOL_IDLE_SECONDS = 900;
+
+/**
+ * Wakes a sandbox and reports whether it reached "running". CreateOS can accept
+ * a resume, show "resuming", then silently fall back to "paused"; the SDK's own
+ * wait would then hang until its timeout. Detect that and give up early.
+ */
+export async function startSandbox(box: Sandbox, signal: AbortSignal, pollMs = 2_000): Promise<boolean> {
+  const request = { ...CONTROL_REQUEST, signal };
+  const deadline = Date.now() + START_TIMEOUT_MS;
+  const status = (): string => box.status;
+  let resumed = false;
+  await box.refresh(request);
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    const current = status();
+    if (current === "running") return true;
+    if (["error", "failed", "destroyed", "destroying"].includes(current)) return false;
+    if (current === "paused") {
+      if (resumed) return false; // It fell back to paused after a resume attempt.
+      try { await box.resume(request); } catch { return false; }
+      resumed = true;
+    }
+    // "creating", "resuming", "forking" and "pausing" settle on their own; keep polling.
+    await new Promise(resolve => setTimeout(resolve, pollMs));
+    await box.refresh(request);
+  }
+  return false;
+}
+
+async function retireSandbox(box: Sandbox) {
+  try { await box.destroy(CONTROL_REQUEST); await box.waitUntilDestroyed(CONTROL_WAIT); } catch { /* Best effort. */ }
+}
+
+/** Returns a running, egress-verified pool sandbox for the slot, creating or replacing it if needed. */
 export async function preparePoolSandbox(slot: number, knownId: string | undefined, signal: AbortSignal, onProgress: (message: string) => void | Promise<void> = () => {}): Promise<{ id: string; forkedFrom: string }> {
   const client = sandboxClient();
   const request = { ...CONTROL_REQUEST, signal };
   try { if (await releaseLegacyForks(signal)) await onProgress("Released old per-run workspaces from the previous version."); }
   catch { /* Best effort; the fork path retries on a quota error. */ }
   let box = await findPoolSandbox(client, slot, knownId, signal);
-  if (!box) box = await forkPoolSandbox(client, slot, signal, onProgress);
+  if (!box) box = await createPoolSandbox(client, slot, signal, onProgress);
   await onProgress(`Starting shared sandbox ${slot}.`);
-  await resumeWorkspace(box, signal);
-  await box.setAutoPause(300, request);
+  if (!await startSandbox(box, signal)) {
+    // A sandbox that will not wake is replaced automatically with a fresh copy.
+    await onProgress(`Shared sandbox ${slot} did not start. Replacing it with a fresh one.`);
+    await retireSandbox(box);
+    box = await createPoolSandbox(client, slot, signal, onProgress);
+    await onProgress(`Starting the new shared sandbox ${slot}.`);
+    if (!await startSandbox(box, signal)) { await retireSandbox(box); throw new SandboxUnavailableError(); }
+  }
+  await box.setAutoPause(POOL_IDLE_SECONDS, request);
   const policy = await box.getEgress(request);
   if (policy.egress.length !== EXPERIMENT_EGRESS.length || !EXPERIMENT_EGRESS.every(rule => policy.egress.includes(rule))) {
     throw new Error("The shared sandbox network policy could not be verified. No experiment was executed.");
@@ -291,7 +340,13 @@ export async function cleanupRunFiles(sandboxId: string, runId: string): Promise
 /** Makes sure a pool sandbox is running before an attempt; auto-pause may have stopped it during a repair. */
 export async function ensurePoolSandboxRunning(id: string, signal: AbortSignal): Promise<void> {
   const box = await sandboxClient().getSandbox(id, { ...CONTROL_REQUEST, signal });
-  await resumeWorkspace(box, signal);
+  if (!await startSandbox(box, signal)) throw new SandboxUnavailableError();
+}
+
+/** Maps low-level sandbox failures to a message people can act on. */
+export function friendlySandboxError(message: string): string {
+  if (/waiting for the expected state|sandbox is (not running|paused)|expected (paused|running)/i.test(message)) return new SandboxUnavailableError().message;
+  return message;
 }
 
 // ---------------------------------------------------------------------------

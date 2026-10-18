@@ -6,7 +6,7 @@ import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
 import { RiverCreditError, RIVER_OUT_OF_CREDIT, storedPlan, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
-import { cleanupRunFiles, ensurePoolSandboxRunning, executeProject, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
+import { cleanupRunFiles, ensurePoolSandboxRunning, executeProject, friendlySandboxError, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
 import { acquireSlot, queuePosition, releaseSlot, slotsBusy } from "./pool";
 import { runAgentLoop } from "./agent-loop";
 import { bundleProject, ENTRYPOINT, validateProject } from "../project";
@@ -185,7 +185,7 @@ async function analyze(run: Run, focus: string | undefined, signal: AbortSignal)
 function failRun(run: Run, error: unknown, signal: AbortSignal) {
   if (signal.aborted || readRun(run.id)?.status === "cancelled") return;
   transition(run, "failed");
-  run.error = error instanceof Error ? error.message : "The run failed.";
+  run.error = error instanceof Error ? friendlySandboxError(error.message) : "The run failed.";
   if (error instanceof RiverCreditError) run.errorCode = RIVER_OUT_OF_CREDIT;
   addEvent(run, "failed", run.error); store().save(run);
 }

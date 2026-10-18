@@ -80,6 +80,12 @@ function organize(metrics: Metric[]) {
   return { figures, tables, notes };
 }
 
+/** Older runs may hold raw sandbox errors; show them in plain language. */
+function readableError(error?: string) {
+  if (error && /waiting for the expected state|sandbox is (not running|paused)/i.test(error)) return "The sandbox did not start, so the experiment could not run. Your experiment is saved. Press \"Run it again\" in a minute.";
+  return error;
+}
+
 function duration(ms: number) {
   if (ms < 1000) return `${ms} ms`;
   const total = Math.round(ms / 1000);
@@ -111,7 +117,7 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
   const outcome = success
     ? `The agent wrote ${files > 1 ? `a ${files}-file program` : "a program"}, ran it in an isolated sandbox${run.attempts.length > 1 ? `, and fixed its own errors ${run.attempts.length - 1} ${run.attempts.length === 2 ? "time" : "times"}` : ""}. The results below are what it measured.`
     : invalidOutput ? "The program ran, but it did not print its results in the expected format. You can ask the agent to repair it."
-      : run.error || "The agent could not complete the experiment. Everything it did is saved below.";
+      : readableError(run.error) || "The agent could not complete the experiment. Everything it did is saved below.";
 
   return <article className="rv">
     <header className="rv-hero">
