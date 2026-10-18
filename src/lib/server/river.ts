@@ -83,13 +83,28 @@ function saveRejectedResponse(content: string, error: ModelResponseError, metada
 export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const key = riverKey();
   if (!key) throw new Error("River is not configured. Add RIVER_API_KEY to the server environment, then start a new run.");
-  const response = await fetch("https://api.river.ai/v1/chat/completions", {
-    method: "POST", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
-    headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], reasoning_effort: "high", max_tokens: 16_384, response_format: { type: "json_object" } }),
-  });
-  if (!response.ok) throw new Error(`River returned HTTP ${response.status}. Check model access and balance in the River console.`);
-  const data = await response.json();
+  const body = JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], reasoning_effort: "high", max_tokens: 16_384, response_format: { type: "json_object" } });
+  let response: Response | undefined;
+  // Rate limits (429) and brief overloads (503) are common when several
+  // investigations start together. Back off and retry before failing the run.
+  for (let attempt = 0; attempt < 6; attempt++) {
+    response = await fetch("https://api.river.ai/v1/chat/completions", {
+      method: "POST", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(180_000)]) : AbortSignal.timeout(180_000),
+      headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
+      body,
+    });
+    if (response.status !== 429 && response.status !== 503) break;
+    if (attempt === 5) break;
+    const retryAfter = Number(response.headers.get("retry-after"));
+    const delay = Number.isFinite(retryAfter) && retryAfter > 0 ? Math.min(retryAfter * 1000, 60_000) : Math.min(5_000 * 2 ** attempt, 60_000);
+    await response.body?.cancel().catch(() => {});
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, delay + Math.random() * 1_000);
+      signal?.addEventListener("abort", () => { clearTimeout(timer); reject(signal.reason ?? new Error("Run cancelled.")); }, { once: true });
+    });
+  }
+  if (!response!.ok) throw new Error(response!.status === 429 ? "River is rate-limiting requests right now. Wait a minute, then try again." : `River returned HTTP ${response!.status}. Check model access and balance in the River console.`);
+  const data = await response!.json();
   const choice = data?.choices?.[0];
   if (choice?.finish_reason === "length") throw new Error("The model exhausted its response budget. No experiment was executed.");
   if (typeof choice?.message?.content !== "string") throw new Error("River returned no structured answer.");

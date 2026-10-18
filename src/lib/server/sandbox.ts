@@ -218,14 +218,14 @@ async function findPoolSandbox(client: CreateosSandboxClient, slot: number, know
   return boxes.find(box => LIVE_STATUSES.has(box.status) && box.data.forked_from === SANDBOX_ID && box.data.envs?.includes(poolMarker(slot)));
 }
 
-/** Destroys paused per-run forks left by the previous one-fork-per-run design. */
+/** Destroys per-run forks left by the previous one-fork-per-run design. They hold CreateOS capacity the pool needs. */
 export async function releaseLegacyForks(signal: AbortSignal): Promise<number> {
   const client = sandboxClient();
   const request = { ...CONTROL_REQUEST, signal };
   const boxes = await client.listSandboxes(request);
   let released = 0;
   for (const box of boxes) {
-    if (box.id === SANDBOX_ID || box.status !== "paused" || box.data.forked_from !== SANDBOX_ID) continue;
+    if (box.id === SANDBOX_ID || !LIVE_STATUSES.has(box.status) || box.data.forked_from !== SANDBOX_ID) continue;
     if (!box.data.envs?.includes("TRACE_EXPERIMENT_ID")) continue;
     await box.destroy(request);
     await box.waitUntilDestroyed({ ...CONTROL_WAIT, signal });
@@ -262,6 +262,8 @@ async function forkPoolSandbox(client: CreateosSandboxClient, slot: number, sign
 export async function preparePoolSandbox(slot: number, knownId: string | undefined, signal: AbortSignal, onProgress: (message: string) => void | Promise<void> = () => {}): Promise<{ id: string; forkedFrom: string }> {
   const client = sandboxClient();
   const request = { ...CONTROL_REQUEST, signal };
+  try { if (await releaseLegacyForks(signal)) await onProgress("Released old per-run workspaces from the previous version."); }
+  catch { /* Best effort; the fork path retries on a quota error. */ }
   let box = await findPoolSandbox(client, slot, knownId, signal);
   if (!box) box = await forkPoolSandbox(client, slot, signal, onProgress);
   await onProgress(`Starting shared sandbox ${slot}.`);

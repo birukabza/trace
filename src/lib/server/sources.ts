@@ -72,7 +72,9 @@ export async function readSource(input: string, abort?: AbortSignal) {
     const html = new TextDecoder().decode(await boundedBody(await publicFetch(new URL(`https://arxiv.org/html/${id}`), signal)));
     title = plainHtml(html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || title);
     text = plainHtml(html);
-    if (text.length < 800) throw new Error("HTML unavailable");
+    // Some arXiv HTML pages are stubs that only point at the PDF (for example
+    // "See pages 1-last of main.pdf"). Real papers are far longer than this.
+    if (text.length < 5_000 || !/ltx_document|ltx_page_main/.test(html)) throw new Error("HTML unavailable");
   } catch (error) {
     if (abort?.aborted) throw error;
     const pdf = await boundedBody(await publicFetch(new URL(`https://arxiv.org/pdf/${id}`), signal));
