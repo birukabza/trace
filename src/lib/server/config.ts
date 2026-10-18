@@ -15,6 +15,12 @@ export function createosCredentialSource(): "stripe_projects" | "custom" {
   return process.env.CREATEOS_SANDBOX_API_KEY ? "custom" : "stripe_projects";
 }
 
+// Last known River billing state. Set when River reports exhausted credit and
+// cleared by the next successful call, so a top-up recovers without a restart.
+const riverState = globalThis as typeof globalThis & { traceRiverOutOfCredit?: boolean };
+export function setRiverOutOfCredit(value: boolean) { riverState.traceRiverOutOfCredit = value; }
+export function riverOutOfCredit() { return riverState.traceRiverOutOfCredit === true; }
+
 export function configuration() {
-  return { riverConfigured: Boolean(riverKey()), createosConfigured: Boolean(createosKey()), model: MODEL, sandboxRegion: "eu", sandboxId: SANDBOX_ID, sandboxUrl: SANDBOX_URL, authentication: "supabase-email-password", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
+  return { riverOutOfCredit: riverOutOfCredit(), riverConfigured: Boolean(riverKey()), createosConfigured: Boolean(createosKey()), model: MODEL, sandboxRegion: "eu", sandboxId: SANDBOX_ID, sandboxUrl: SANDBOX_URL, authentication: "supabase-email-password", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
 }

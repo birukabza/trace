@@ -147,6 +147,10 @@ export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () 
   </section>;
 }
 
+export function CreditAlert({ title = "Out of River credit" }: { title?: string }) {
+  return <div className="credit-alert" role="alert"><span className="credit-alert-icon">!</span><div><strong>{title}</strong><p>The AI model provider has no credit left, so new investigations can't plan or write code. The site owner needs to top up River. Saved reports are still available.</p></div></div>;
+}
+
 export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }: {
   run: Run; onBack: () => void; onApprove: () => void; onCancel: () => void; onRetry: () => void; busy: boolean;
 }) {
@@ -157,6 +161,7 @@ export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }
     <div className="workspace-topline"><button className="text-button" onClick={onBack}><ArrowLeft size={14} />New research</button>{!active && <a className="text-button" href={run.sourceUrl} target="_blank" rel="noreferrer">Read paper<ArrowUpRight size={13} /></a>}</div>
     {active ? <ProcessView run={run} onCancel={onCancel} busy={busy} /> : <div className="research-sheet stage-enter">
       <p className="paper-byline">{run.paper?.title || run.title}</p>
+      {run.errorCode === "river_out_of_credit" && <CreditAlert />}
       {run.mode === "example" && <p className="example-note">Recorded example. These are measurements from a previous experiment.</p>}
       {run.status === "awaiting_approval" ? <><Protocol run={run} onApprove={onApprove} busy={busy} /><button className="text-button review-cancel" onClick={onCancel} disabled={busy}>Cancel experiment</button></> : run.result || run.attempts.length ? <Evidence run={run} /> : <div className="outcome-empty"><ProcessOrb state={failed ? "shaping" : "breathing"} label={failed ? "Experiment stopped" : "Research paused"} still /><h1>{failed ? "We could not finish this one." : "You stopped this investigation."}</h1><p>{failed ? "No result is available. The details below explain where it stopped." : "You can start again whenever you are ready."}</p><button className="secondary-button" onClick={onBack}>Start a new investigation<ArrowRight size={14} /></button></div>}
       {(failed || invalidOutput) && run.plan && <div className="retry-protocol"><p>{invalidOutput ? "The process ran, but its output needs correction. Retry the unchanged experiment with automatic output validation and repair." : "The saved experiment and its evidence are kept. You can start a fresh attempt."}</p><button className="secondary-button" onClick={onRetry} disabled={busy}>{invalidOutput ? "Repair measurement output" : "Try again"}<ArrowRight size={14} /></button></div>}

@@ -77,12 +77,15 @@ export interface Run {
   workingCode?: { code: string; attempt: number; updatedAt: string };
   repairs?: { afterAttempt: number; diagnosis: string; summary: string; codeHash: string; pythonCode?: string; at: string }[];
   sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean; releasedAt?: string; poolSlot?: number };
+  /** Machine-readable failure reason, such as "river_out_of_credit". */
+  errorCode?: string;
   /** Place in the shared-sandbox queue. Computed when read; never stored. */
   queuePosition?: number;
 }
 
 export interface Health {
   riverConfigured: boolean;
+  riverOutOfCredit?: boolean;
   createosConfigured: boolean;
   model: string;
   sandboxId: string;

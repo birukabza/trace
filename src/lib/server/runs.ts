@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { Run, ExperimentResult } from "../types";
 import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
-import { analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
+import { RiverCreditError, RIVER_OUT_OF_CREDIT, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
 import { cleanupRunFiles, ensurePoolSandboxRunning, executeNumerical, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
 import { acquireSlot, queuePosition, releaseSlot, slotsBusy } from "./pool";
@@ -185,6 +185,7 @@ function failRun(run: Run, error: unknown, signal: AbortSignal) {
   if (signal.aborted || readRun(run.id)?.status === "cancelled") return;
   transition(run, "failed");
   run.error = error instanceof Error ? error.message : "The run failed.";
+  if (error instanceof RiverCreditError) run.errorCode = RIVER_OUT_OF_CREDIT;
   addEvent(run, "failed", run.error); store().save(run);
 }
 

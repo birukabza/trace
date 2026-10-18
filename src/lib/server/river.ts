@@ -2,7 +2,7 @@ import { z } from "zod";
 import { randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { MODEL, riverKey } from "./config";
+import { MODEL, riverKey, setRiverOutOfCredit } from "./config";
 import type { ExperimentPlan } from "../types";
 import type { AgentExecution } from "./agent-loop";
 import { dataPath } from "./paths";
@@ -80,6 +80,19 @@ function saveRejectedResponse(content: string, error: ModelResponseError, metada
   } catch { return undefined; }
 }
 
+export const RIVER_OUT_OF_CREDIT = "river_out_of_credit";
+export class RiverCreditError extends Error {
+  readonly code = RIVER_OUT_OF_CREDIT;
+  constructor() { super("River is out of credit, so the agent could not plan or write code. The site owner needs to add credit in the River console. No experiment was run."); }
+}
+
+/** River signals exhausted credit with 402, or with a billing message on other statuses. */
+export function isRiverCreditResponse(status: number, body: string) {
+  if (status === 402) return true;
+  if (/rate.?limit|too many requests/i.test(body)) return false;
+  return /insufficient (credit|balance|funds)|out of credit|no credit|credit (balance|limit)|balance (is )?(too low|insufficient|exhausted)|billing|payment required|top.?up/i.test(body);
+}
+
 export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
   const key = riverKey();
   if (!key) throw new Error("River is not configured. Add RIVER_API_KEY to the server environment, then start a new run.");
@@ -93,6 +106,9 @@ export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       body,
     });
+    if (response.ok) break;
+    const errorBody = await response.clone().text().catch(() => "");
+    if (isRiverCreditResponse(response.status, errorBody)) { setRiverOutOfCredit(true); throw new RiverCreditError(); }
     if (response.status !== 429 && response.status !== 503) break;
     if (attempt === 5) break;
     const retryAfter = Number(response.headers.get("retry-after"));
@@ -104,6 +120,7 @@ export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?
     });
   }
   if (!response!.ok) throw new Error(response!.status === 429 ? "River is rate-limiting requests right now. Wait a minute, then try again." : `River returned HTTP ${response!.status}. Check model access and balance in the River console.`);
+  setRiverOutOfCredit(false);
   const data = await response!.json();
   const choice = data?.choices?.[0];
   if (choice?.finish_reason === "length") throw new Error("The model exhausted its response budget. No experiment was executed.");
