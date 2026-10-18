@@ -1,5 +1,7 @@
 import { CreateosSandboxClient, type Sandbox } from "@nodeops-createos/sandbox";
 import { createosKey, SANDBOX_ID, SANDBOX_URL } from "./config";
+import { RESEARCH_LIMITS } from "../capabilities";
+import { parseProject, validateProject } from "../project";
 
 // An empty CreateOS allowlist means OPEN egress. A single reserved TEST-NET
 // address keeps the host policy restrictive without exposing package registries.
@@ -188,9 +190,9 @@ export async function executeNumerical(code: string, runId: string, attempt: num
   }
 }
 
-export async function holdExecutionLease(started: number, now = Date.now(), wait = (milliseconds: number) => new Promise<void>(resolve => setTimeout(resolve, milliseconds))) {
+export async function holdExecutionLease(started: number, now = Date.now(), wait = (milliseconds: number) => new Promise<void>(resolve => setTimeout(resolve, milliseconds)), deadlineMs = 65_000) {
   // Aborting HTTP does not confirm that the remote process stopped. Keep this sandbox's queue leased until its process deadline.
-  const remaining = Math.max(0, started + 65_000 - now);
+  const remaining = Math.max(0, started + deadlineMs - now);
   if (remaining) await wait(remaining);
 }
 
@@ -283,11 +285,96 @@ export async function cleanupRunFiles(sandboxId: string, runId: string): Promise
   const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 20_000, retry: false });
   const box = await client.getSandbox(sandboxId, CONTROL_REQUEST);
   if (box.status !== "running") return;
-  await box.runCommand("sh", ["-c", `rm -f /tmp/repro-${runId}-*.py`], { timeoutMs: 15_000 });
+  await box.runCommand("sh", ["-c", `rm -f /tmp/repro-${runId}-*.py; rm -rf /tmp/trace-runs/${runId}`], { timeoutMs: 15_000 });
 }
 
 /** Makes sure a pool sandbox is running before an attempt; auto-pause may have stopped it during a repair. */
 export async function ensurePoolSandboxRunning(id: string, signal: AbortSignal): Promise<void> {
   const box = await sandboxClient().getSandbox(id, { ...CONTROL_REQUEST, signal });
   await resumeWorkspace(box, signal);
+}
+
+// ---------------------------------------------------------------------------
+// Project executor. Each attempt runs as a fresh random unprivileged user in
+// its own private folder, with memory, CPU, file-size and process limits, no
+// network (sandbox egress is restricted) and a wall-clock timeout. Any process
+// it leaves behind is killed afterwards. This replaces the old allow-list
+// runner, so experiments can use scipy, scikit-learn, pandas, numba and their
+// own modules while staying isolated from other runs and from the system.
+// ---------------------------------------------------------------------------
+
+const RUNS_ROOT = "/tmp/trace-runs";
+const PYTHON_RECORD = "/var/lib/trace-python";
+const SPLIT = "__TRACE_EXIT__";
+
+function shellQuote(value: string) { return `'${value.replaceAll("'", `'"'"'`)}'`; }
+
+export async function executeProject(bundle: string, runId: string, attempt: number, signal: AbortSignal, sandboxId: string) {
+  const key = createosKey();
+  if (!key) throw new Error("The sandbox is not configured on the server.");
+  if (!/^[0-9a-f-]{36}$/.test(runId)) throw new Error("Invalid run identifier.");
+  const files = parseProject(bundle);
+  const problem = validateProject(files);
+  if (problem) return { stdout: "", stderr: `Project rejected before execution: ${problem}`, exitCode: 2, durationMs: 0 };
+
+  const seconds = RESEARCH_LIMITS.executionSeconds;
+  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: (seconds + 40) * 1000, retry: false });
+  const box = await client.getSandbox(sandboxId, { signal, timeoutMs: 15_000 });
+  if (box.status !== "running") throw new Error("The sandbox is not running. Retry the investigation in a moment.");
+
+  const uid = 20_000 + Math.floor(Math.random() * 40_000);
+  const directory = `${RUNS_ROOT}/${runId}/a${attempt}`;
+  // The image installs Python 3.13 and its packages under root's home, which
+  // other users cannot read. Once per sandbox, open only that install (and
+  // traverse-only access to its parent folders) and record its interpreter.
+  const exposePython = `[ -s ${PYTHON_RECORD} ] || { PREFIX=$(python3 -c 'import sys; print(sys.prefix)') && d="$PREFIX" && while [ "$d" != "/" ]; do chmod o+x "$d"; d=$(dirname "$d"); done && chmod -R o+rX "$PREFIX" && python3 -c 'import os, sys; print(os.path.realpath(sys.executable))' > ${PYTHON_RECORD}.tmp && mv ${PYTHON_RECORD}.tmp ${PYTHON_RECORD}; }`;
+  const prepare = [
+    exposePython,
+    `mkdir -p ${RUNS_ROOT} && chmod 711 ${RUNS_ROOT}`,
+    `rm -rf ${shellQuote(directory)} && mkdir -p ${shellQuote(directory)}`,
+    ...[...new Set(files.map(file => file.path.split("/").slice(0, -1).join("/")).filter(Boolean))].map(folder => `mkdir -p ${shellQuote(`${directory}/${folder}`)}`),
+  ].join(" && ");
+  await box.runCommand("sh", ["-c", prepare], { signal, timeoutMs: 120_000 });
+  for (const file of files) await box.files.upload(`${directory}/${file.path}`, file.content, { signal, timeoutMs: 20_000 });
+
+  const limits = [
+    "--as=3221225472",          // 3 GB address space per process
+    "--fsize=268435456",        // 256 MB per written file
+    "--nproc=128",              // processes for this user (no fork bombs)
+    "--nofile=512",
+    `--cpu=${seconds * 2 + 10}`, // CPU seconds across both cores
+  ].join(" ");
+  const environment = [
+    "PATH=/usr/local/bin:/usr/bin:/bin", `HOME=${directory}`, "MPLBACKEND=Agg", "PYTHONDONTWRITEBYTECODE=1", "PYTHONUNBUFFERED=1",
+    "OPENBLAS_NUM_THREADS=2", "OMP_NUM_THREADS=2", "MKL_NUM_THREADS=2", "NUMBA_NUM_THREADS=2", `NUMBA_CACHE_DIR=${directory}/.numba`, `MPLCONFIGDIR=${directory}/.matplotlib`,
+  ].map(shellQuote).join(" ");
+  const script = [
+    `cd ${shellQuote(directory)}`,
+    `chown -R ${uid}:${uid} . && chmod 700 .`,
+    `PY=$(cat ${PYTHON_RECORD} 2>/dev/null); [ -x "$PY" ] || PY=python3`,
+    `prlimit ${limits} -- setpriv --reuid=${uid} --regid=${uid} --clear-groups --no-new-privs -- timeout --signal=TERM --kill-after=5 ${seconds} env -i ${environment} "$PY" -E -s main.py > .stdout 2> .stderr`,
+    "code=$?",
+    `pkill -KILL -u ${uid} 2>/dev/null`,
+    // Long output keeps its beginning and its complete last line, where the
+    // metrics JSON is printed, so measurements are never cut in half.
+    `if [ "$(wc -c < .stdout)" -gt 40000 ]; then head -c 24000 .stdout; printf '\\n... output truncated ...\\n'; tail -n 1 .stdout | head -c 60000; else cat .stdout; fi`,
+    `printf '\\n${SPLIT}%s\\n' "$code"`,
+    "head -c 20000 .stderr >&2",
+    "exit 0",
+  ].join("; ");
+
+  const started = Date.now();
+  let confirmedFinished = false;
+  try {
+    const { result } = await box.runCommand("sh", ["-c", script], { signal, timeoutMs: (seconds + 30) * 1000 });
+    confirmedFinished = true;
+    const marker = result.stdout.lastIndexOf(`\n${SPLIT}`);
+    const stdout = marker >= 0 ? result.stdout.slice(0, marker) : result.stdout;
+    const exit = marker >= 0 ? Number(result.stdout.slice(marker + SPLIT.length + 1).trim()) : -1;
+    const timedOut = exit === 124 || exit === 137;
+    const stderr = [result.stderr, timedOut ? `\nThe program was stopped after the ${seconds}-second limit.` : "", result.error ? `\nSandbox agent error: ${result.error}` : ""].join("").slice(0, 32_000);
+    return { stdout: stdout.slice(0, 90_000), stderr, exitCode: result.error ? -1 : Number.isFinite(exit) ? exit : -1, durationMs: Date.now() - started };
+  } finally {
+    if (!confirmedFinished) await holdExecutionLease(started, Date.now(), undefined, (seconds + 10) * 1000);
+  }
 }

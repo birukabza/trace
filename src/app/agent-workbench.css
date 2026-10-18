@@ -88,3 +88,9 @@
 @keyframes caret-blink { 50% { opacity: 0; } }
 .agent-source.is-streaming .agent-source-line:last-child { background: #a3b8a80d; }
 @media(max-width:600px) { .console-line { grid-template-columns: 40px 10px 1fr; } .console-command { grid-column: 3; } .console-text { grid-column: 3; } .agent-console-meta > span:not(.agent-live) { display: none; } }
+
+/* Project file tabs */
+.agent-file-tabs { display: flex; gap: 4px; padding: 10px 14px 0; overflow-x: auto; border-bottom: 1px solid #1f1f1f; }
+.agent-file-tabs button { flex: none; padding: 7px 12px; border: 0; border-radius: 8px 8px 0 0; background: transparent; color: #8a8a8a; font: 11.5px var(--mono); cursor: pointer; }
+.agent-file-tabs button[aria-pressed="true"] { background: #1a1a1a; color: #f0f0f0; }
+.agent-file-tabs button:hover { color: #f0f0f0; }

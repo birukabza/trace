@@ -25,7 +25,7 @@ runs it in an isolated sandbox, and fixes its own code when it fails.
 ```mermaid
 flowchart LR
     A[📄 Paper or repo URL] --> B[🧠 Extract testable claims]
-    B --> C[✍️ Write Python experiment]
+    B --> C[✍️ Write a multi-file Python project]
     C --> D[⚙️ Run in CreateOS sandbox]
     D -->|fails or no measurements| E[🔧 Diagnose and repair]
     E --> D
@@ -36,7 +36,7 @@ flowchart LR
 |---|---|
 | 🎯 **Grounded claims** | Every claim quotes an exact excerpt from the source. |
 | 🔁 **Self-repair** | Up to 3 attempts, each one learning from the last error. |
-| 🔒 **Isolated runs** | Restricted network, no ingress, allow-listed imports, memory and time caps. |
+| 🔒 **Isolated runs** | Each attempt runs as a throwaway user with no network, plus memory, CPU, file and time limits. |
 | 🚦 **Fair queue** | 3 shared sandboxes; users see their place in line. |
 | 📥 **Exportable** | Download the protocol, code, output and limitations as a report. |
 
@@ -51,14 +51,14 @@ flowchart LR
     FE -- auth --> SB[(Supabase)]
     FE -- proxy --> BE["Node backend<br/>Railway + SQLite"]
     BE --> RV["River LLM<br/>GLM-5.3-Flash"]
-    BE --> CO["CreateOS sandbox pool<br/>3 × Python + NumPy"]
+    BE --> CO["CreateOS sandbox pool<br/>3 × Python 3.13 + SciPy stack"]
 ```
 
 ## 🧪 What it can test
 
 | ✅ Good fit | ❌ Out of scope |
 |---|---|
-| Small CPU numerical checks | GPU training |
+| CPU experiments up to 2 minutes per attempt | GPU training |
 | Optimizer, init and normalization math | Large dataset downloads |
 | Reduced toy versions of experiments | Full benchmark reproduction |
 | arXiv HTML or text PDFs | Scanned PDFs |
@@ -67,7 +67,7 @@ flowchart LR
 
 ## 🚀 Quick start
 
-**You need:** Node 24, a [Supabase](https://supabase.com) project, a [River](https://river.ai) API key, and a CreateOS base sandbox with Python 3 and NumPy.
+**You need:** Node 24, a [Supabase](https://supabase.com) project, a [River](https://river.ai) API key, and a CreateOS base sandbox with Python 3 with NumPy, SciPy, scikit-learn and pandas.
 
 ```bash
 git clone https://github.com/birukabza/trace.git && cd trace

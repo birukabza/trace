@@ -4,11 +4,12 @@ import { join } from "node:path";
 import type { Run, ExperimentResult } from "../types";
 import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
-import { RiverCreditError, RIVER_OUT_OF_CREDIT, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
+import { RiverCreditError, RIVER_OUT_OF_CREDIT, storedPlan, analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
-import { cleanupRunFiles, ensurePoolSandboxRunning, executeNumerical, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
+import { cleanupRunFiles, ensurePoolSandboxRunning, executeProject, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
 import { acquireSlot, queuePosition, releaseSlot, slotsBusy } from "./pool";
 import { runAgentLoop } from "./agent-loop";
+import { bundleProject, ENTRYPOINT, validateProject } from "../project";
 import { RESEARCH_LIMITS } from "../capabilities";
 import { measurementFeedback, parseMeasurements } from "../measurements";
 import { PublicRunError } from "./http";
@@ -38,7 +39,7 @@ export function recoverInterruptedRuns(database: RunStore, controllers: Map<stri
       database.save(run);
     }
   }
-  const until = Math.max(database.executionLeaseUntil(), remoteMayBeRunning ? Date.now() + 65_000 : 0);
+  const until = Math.max(database.executionLeaseUntil(), remoteMayBeRunning ? Date.now() + (RESEARCH_LIMITS.executionSeconds + 10) * 1000 : 0);
   const wait = until > Date.now() ? waitForRemote(until) : Promise.resolve();
   return wait.then(async () => {
     // Terminal status can have been saved just before a crash prevented finally
@@ -171,8 +172,8 @@ async function analyze(run: Run, focus: string | undefined, signal: AbortSignal)
       addEvent(run, "blocked", run.error);
     } else {
       if (!analysis.claims.some(claim => claim.id === analysis.plan!.claimId && claim.feasible)) throw new Error("The proposed plan does not select a feasible extracted claim.");
-      run.plan = analysis.plan;
-      run.workingCode = { code: analysis.plan.pythonCode, attempt: 1, updatedAt: new Date().toISOString() };
+      run.plan = storedPlan(analysis.plan);
+      run.workingCode = { code: run.plan.pythonCode, attempt: 1, updatedAt: new Date().toISOString() };
       if (source.sourceType === "github" || repository) run.plan.limitations = [...run.plan.limitations.slice(0, 14), "Only the repository README was inspected. Repository code, its commit, and dependency lockfiles were not downloaded or executed."];
       addEvent(run, "written", "Experiment code written. The original protocol and code are retained before execution.");
     }
@@ -260,11 +261,11 @@ async function execute(run: Run, signal: AbortSignal) {
         saveActive(run, signal);
         await ensurePoolSandboxRunning(workspace!.id, signal);
         signal.throwIfAborted();
-        store().saveExecutionLease(Date.now() + 110_000);
+        store().saveExecutionLease(Date.now() + (RESEARCH_LIMITS.executionSeconds + 50) * 1000);
         transition(run, "running");
         addEvent(run, "running", `Running Python in the sandbox · attempt ${attempt} of ${RESEARCH_LIMITS.maxAttempts}.`);
         saveActive(run, signal);
-        const output = await executeNumerical(code, run.id, attempt, signal, workspace!.id);
+        const output = await executeProject(code, run.id, attempt, signal, workspace!.id);
         return { ...output, ...(output.exitCode === 0 ? { validationError: measurementFeedback(output.stdout) } : {}) };
       },
       onAttempt: record => {
@@ -280,7 +281,14 @@ async function execute(run: Run, signal: AbortSignal) {
         addEvent(run, "workspace_ready", "Keeping the isolated workspace ready while the agent diagnoses the feedback. It will pause after the experiment finishes.");
         saveActive(run, signal);
       },
-      repair: history => riverJson(repairPrompt(run.plan!, history), repairSchema, signal),
+      repair: async history => {
+        const revision = await riverJson(repairPrompt(run.plan!, history), repairSchema, signal);
+        if (revision.action === "stop") return revision;
+        const files = revision.files?.length ? revision.files : [{ path: ENTRYPOINT, content: revision.pythonCode! }];
+        const problem = validateProject(files);
+        if (problem) return { action: "stop", reason: `The agent's repaired project was rejected: ${problem}` };
+        return { action: "repair", diagnosis: revision.diagnosis, summary: revision.summary, pythonCode: revision.files?.length ? bundleProject(files) : revision.pythonCode! };
+      },
       onRevision: (revision, nextAttempt) => {
         run.workingCode = { code: revision.pythonCode, attempt: nextAttempt, updatedAt: new Date().toISOString() };
         (run.repairs ??= []).push({ afterAttempt: nextAttempt - 1, diagnosis: revision.diagnosis, summary: revision.summary, codeHash: hashCode(revision.pythonCode), pythonCode: revision.pythonCode, at: new Date().toISOString() });
