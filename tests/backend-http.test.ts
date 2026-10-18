@@ -18,7 +18,7 @@ function setup(overrides: Partial<BackendDependencies> = {}) {
     createRun(input, owner) { calls.push({ operation: "create", owner, input }); return fixture; },
     approveRun(_id, input, owner) { calls.push({ operation: "approve", owner, input }); return fixture; },
     cancelRun(_id, owner) { calls.push({ operation: "cancel", owner }); return fixture; },
-    markdownReport: () => "# Report",
+    pdfReport: async () => new TextEncoder().encode("%PDF-report"),
     ...overrides,
   };
   return { handler: createBackendHandler(dependencies, "https://trace.example"), calls };
@@ -111,7 +111,8 @@ test("writes enforce bounded JSON and an exact allowed origin", async () => {
 test("reports and events have no-store headers and retain owner checks", async () => {
   const { handler, calls } = setup();
   const report = await handler(request("/api/runs/run-one/report"));
-  assert.equal(await report.text(), "# Report");
+  assert.equal(await report.text(), "%PDF-report");
+  assert.equal(report.headers.get("content-type"), "application/pdf");
   assert.equal(report.headers.get("cache-control"), "no-store");
   const events = await handler(request("/api/runs/run-one/events"));
   assert.match(await events.text(), /event: run\ndata: /);

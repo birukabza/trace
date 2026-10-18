@@ -7,7 +7,7 @@ import "./auth.css";
 
 export const metadata: Metadata = {
   title: "Trace | Research deserves a second run",
-  description: "A research agent that reads a paper, writes and runs a focused experiment, and repairs its code using real CreateOS Sandbox feedback.",
+  description: "A research agent that reads a paper, writes and runs a focused experiment, and repairs its code using real sandbox feedback.",
 };
 
 export const viewport: Viewport = { themeColor: "#0a0a0a", colorScheme: "dark" };

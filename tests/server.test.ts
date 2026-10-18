@@ -294,8 +294,8 @@ test("reports retain actual coverage, all code attempts, repairs and captured pr
   assert.match(report, /Paused after run: confirmed/);
   assert.match(report, /### Attempt 1/); assert.match(report, /### Attempt 2/);
   assert.match(report, /print\(missing\)/); assert.match(report, /NameError/);
-  assert.match(report, /Stripe Projects-managed environment variable/);
-  assert.match(report, /Custom CreateOS environment variable/);
+  assert.match(report, /isolated sandbox/);
+  assert.doesNotMatch(report, /CreateOS|Stripe/i);
   assert.match(report, /### After attempt 1/);
   assert.match(report, /second\\-code\\-hash/);
   assert.doesNotMatch(report, /^## Forged/m);
@@ -305,8 +305,7 @@ test("legacy reports do not infer missing coverage or provider verification", ()
   const value = run(); value.attempts = [{ number: 1, code: "print(42)", stdout: "42", stderr: "", exitCode: 0, durationMs: 5 }];
   const report = markdownReport(value);
   assert.match(report, /coverage was not recorded/);
-  assert.match(report, /Provider: Not recorded/);
-  assert.match(report, /Credential source: Not recorded/);
+  assert.doesNotMatch(report, /Provider:|Credential source:/);
   assert.doesNotMatch(report, /Restricted external egress: verified/);
 });
 

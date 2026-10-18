@@ -11,7 +11,7 @@ export interface BackendDependencies {
   createRun(input: Record<string, unknown>, userId: string): Run;
   approveRun(id: string, input: Record<string, unknown>, userId: string): Run;
   cancelRun(id: string, userId: string): Run;
-  markdownReport(run: Run): string;
+  pdfReport(run: Run): Promise<Uint8Array<ArrayBuffer>>;
 }
 
 class HttpError extends Error {
@@ -109,7 +109,7 @@ export function createBackendHandler(dependencies: BackendDependencies, frontend
         if (!action && request.method === "GET") response = Response.json(run);
         else if (action === "approve" && request.method === "POST") response = Response.json(dependencies.approveRun(id, await readBoundedJson(request), user.id));
         else if (action === "cancel" && request.method === "POST") response = Response.json(dependencies.cancelRun(id, user.id));
-        else if (action === "report" && request.method === "GET") response = new Response(dependencies.markdownReport(run), { headers: { "Content-Type": "text/markdown; charset=utf-8", "Content-Disposition": `attachment; filename="trace-${id}.md"` } });
+        else if (action === "report" && request.method === "GET") response = new Response(await dependencies.pdfReport(run), { headers: { "Content-Type": "application/pdf", "Content-Disposition": `attachment; filename="trace-${id}.pdf"` } });
         else if (action === "events" && request.method === "GET") response = runEvents(request, id, user.id, dependencies);
         else throw new HttpError(405, "Method is not allowed.");
       }

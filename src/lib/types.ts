@@ -86,9 +86,7 @@ export interface Run {
 export interface Health {
   riverConfigured: boolean;
   riverOutOfCredit?: boolean;
-  createosConfigured: boolean;
+  sandboxConfigured: boolean;
   model: string;
-  sandboxId: string;
-  sandboxUrl: string;
   authRequired?: boolean;
 }

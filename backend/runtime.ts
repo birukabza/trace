@@ -1,6 +1,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { configuration } from "../src/lib/server/config";
-import { approveRun, cancelRun, createRun, getRun, listRuns, markdownReport } from "../src/lib/server/runs";
+import { approveRun, cancelRun, createRun, getRun, listRuns } from "../src/lib/server/runs";
+import { pdfReport } from "../src/lib/server/pdf-report";
 import { createBackendHandler } from "./http";
 import { tokenAuthenticator } from "./auth";
 
@@ -18,6 +19,6 @@ export function backendHandler() {
   return createBackendHandler({
     authenticationConfigured: Boolean(supabase),
     authenticate: supabase ? tokenAuthenticator(supabase) : async () => null,
-    configuration, approveRun, cancelRun, createRun, getRun, listRuns, markdownReport,
+    configuration, approveRun, cancelRun, createRun, getRun, listRuns, pdfReport,
   }, process.env.FRONTEND_URL);
 }

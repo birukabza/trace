@@ -22,5 +22,5 @@ export function setRiverOutOfCredit(value: boolean) { riverState.traceRiverOutOf
 export function riverOutOfCredit() { return riverState.traceRiverOutOfCredit === true; }
 
 export function configuration() {
-  return { riverOutOfCredit: riverOutOfCredit(), riverConfigured: Boolean(riverKey()), createosConfigured: Boolean(createosKey()), model: MODEL, sandboxRegion: "eu", sandboxId: SANDBOX_ID, sandboxUrl: SANDBOX_URL, authentication: "supabase-email-password", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
+  return { riverOutOfCredit: riverOutOfCredit(), riverConfigured: Boolean(riverKey()), sandboxConfigured: Boolean(createosKey()), model: MODEL, authentication: "supabase-email-password", executionLimitSeconds: RESEARCH_LIMITS.executionSeconds };
 }

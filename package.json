@@ -25,6 +25,7 @@
     "@supabase/supabase-js": "^2.118.0",
     "lucide-react": "latest",
     "next": "latest",
+    "pdfkit": "^0.17.2",
     "react": "latest",
     "react-dom": "latest",
     "server-only": "^0.0.1",
@@ -35,6 +36,7 @@
   },
   "devDependencies": {
     "@types/node": "latest",
+    "@types/pdfkit": "^0.17.3",
     "@types/react": "latest",
     "@types/react-dom": "latest",
     "concurrently": "^10.0.6",

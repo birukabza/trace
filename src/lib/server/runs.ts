@@ -59,7 +59,7 @@ export function recoverInterruptedRuns(database: RunStore, controllers: Map<stri
         current.sandbox.pausedAfterRun = true;
         addEvent(current, "paused", "Experiment workspace paused during recovery.");
       } else {
-        addEvent(current, "cleanup", "Recovery could not confirm the experiment workspace paused. Check its state in CreateOS.");
+        addEvent(current, "cleanup", "Recovery could not confirm the experiment workspace paused. Check the sandbox state.");
       }
       database.save(current);
     }
@@ -123,9 +123,9 @@ export function createRun(input: Record<string, unknown>, ownerId: string) {
   run.repositoryUrl = typeof input.repositoryUrl === "string" && input.repositoryUrl ? input.repositoryUrl : undefined;
   run.executionMode = "automatic";
   addEvent(run, "analyzing", "Reading source evidence, then writing, running and repairing one focused experiment automatically.");
-  if (!riverKey() || !configuration().createosConfigured) {
+  if (!riverKey() || !configuration().sandboxConfigured) {
     transition(run, "blocked");
-    run.error = !riverKey() ? "The agent API is not configured on the server. No model or sandbox request was made." : "CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server. No model or sandbox request was made.";
+    run.error = !riverKey() ? "The agent API is not configured on the server. No model or sandbox request was made." : "The sandbox is not configured on the server. No model or sandbox request was made.";
     addEvent(run, "blocked", run.error); store().save(run); return run;
   }
   store().save(run);
@@ -194,7 +194,7 @@ export function approveRun(id: string, input: Record<string, unknown>, ownerId: 
   if (!run) throw new PublicRunError("Run not found.", 404);
   if (run.status !== "awaiting_approval" || !run.plan) throw new Error("Only a pending legacy investigation can continue.");
   if (input.claimId && input.claimId !== run.plan.claimId) throw new Error("The selected claim must match the existing protocol.");
-  if (!configuration().createosConfigured) throw new Error("CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server.");
+  if (!configuration().sandboxConfigured) throw new Error("The sandbox is not configured on the server.");
   run.executionMode = "automatic";
   launch(run, signal => queueExecution(run, signal));
   return run;
@@ -220,11 +220,11 @@ export function serializeExecution(previous: Promise<void>, signal: AbortSignal,
 
 async function queueExecution(run: Run, signal: AbortSignal) {
   validateExecutableRun(run);
-  if (!configuration().createosConfigured) throw new Error("CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server.");
+  if (!configuration().sandboxConfigured) throw new Error("The sandbox is not configured on the server.");
   transition(run, "queued");
   addEvent(run, "queued", slotsBusy()
     ? `Code ready. All ${POOL_SIZE} shared sandboxes are busy, so this investigation is waiting in line and will start automatically.`
-    : "Code ready. Preparing a shared CreateOS sandbox.");
+    : "Code ready. Preparing a shared sandbox.");
   saveActive(run, signal);
   // Recovery after a restart must finish before new work reaches the sandboxes.
   await worker.execution.catch(() => {});
@@ -262,7 +262,7 @@ async function execute(run: Run, signal: AbortSignal) {
         signal.throwIfAborted();
         store().saveExecutionLease(Date.now() + 110_000);
         transition(run, "running");
-        addEvent(run, "running", `Running Python in CreateOS · attempt ${attempt} of ${RESEARCH_LIMITS.maxAttempts}.`);
+        addEvent(run, "running", `Running Python in the sandbox · attempt ${attempt} of ${RESEARCH_LIMITS.maxAttempts}.`);
         saveActive(run, signal);
         const output = await executeNumerical(code, run.id, attempt, signal, workspace!.id);
         return { ...output, ...(output.exitCode === 0 ? { validationError: measurementFeedback(output.stdout) } : {}) };

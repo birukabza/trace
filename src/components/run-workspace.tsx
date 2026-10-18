@@ -5,7 +5,6 @@ import { ArrowDownToLine, ArrowLeft, ArrowRight, ArrowUpRight, Check, CheckCheck
 import type { Run, RunStatus } from "@/lib/types";
 import { ProcessOrb } from "./process-orb";
 import type { OrbState } from "thinking-orbs";
-import { PlatformProof } from "./platform-proof";
 import { RESEARCH_LIMITS } from "@/lib/capabilities";
 import { AgentWorkbench } from "./agent-workbench";
 import { AgentConsole } from "./agent-console";
@@ -105,7 +104,7 @@ function Evidence({ run }: { run: Run }) {
       <details className="quiet-disclosure"><summary>See the measurements<ChevronDown size={15} /></summary><div className="disclosure-body"><ExperimentMeasurements metrics={result.metrics} /></div></details>
       {result.limitations.length > 0 && <div className="result-caveat"><span>Keep in mind</span><p>{result.limitations[0]}</p>{result.limitations.length > 1 && <details><summary>More about the scope</summary><ul>{result.limitations.slice(1).map(value => <li key={value}>{value}</li>)}</ul></details>}</div>}
     </>}
-    <div className="report-download"><a className="primary-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report<ArrowDownToLine size={15} /></a></div>
+    <div className="report-download"><a className="primary-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download PDF report<ArrowDownToLine size={15} /></a></div>
     {Boolean(run.repairs?.length) && <details className="quiet-disclosure"><summary>How the agent fixed its code<ChevronDown size={15} /></summary><div className="disclosure-body"><RepairRecord run={run} /></div></details>}
     {attempt && <details className="quiet-disclosure execution-details"><summary>Execution record{run.attempts.length > 1 ? ` · ${run.attempts.length} attempts` : ""}<ChevronDown size={15} /></summary><div className="disclosure-body"><div className="attempt-selector" aria-label="Select execution attempt">{run.attempts.map((item, index) => <button key={item.number} className={index === attemptIndex ? "active" : ""} aria-pressed={index === attemptIndex} onClick={() => setSelectedAttempt(index)}>Attempt {item.number}{item.exitCode === 0 && !item.validationError ? " · passed" : item.validationError ? " · invalid output" : " · stopped"}</button>)}</div>{attempt.changeReason && <p>{attempt.changeReason}</p>}<p className="execution-duration">Exit {attempt.exitCode} / {(attempt.durationMs / 1000).toFixed(1)}s</p><h3>Output</h3><pre className="terminal-output">{attempt.stdout || "No output"}</pre><h3>Errors</h3><pre className="terminal-output">{attempt.stderr || "No errors"}</pre><details><summary>Submitted code</summary><pre className="terminal-output">{attempt.code}</pre></details></div></details>}
   </div>;
@@ -115,12 +114,12 @@ function processPhase(run: Run): ProcessPhase {
   if (run.status === "queued" && run.queuePosition) return { title: run.queuePosition === 1 ? "You're next in line." : `You're number ${run.queuePosition} in line.`, description: `All shared sandboxes are busy with other investigations. ${run.queuePosition === 1 ? "Yours starts as soon as one frees up." : `${run.queuePosition - 1} ${run.queuePosition === 2 ? "investigation is" : "investigations are"} ahead of yours.`} You can leave this page open; it starts automatically.`, orb: "connecting", step: 2 };
   if (run.status === "queued") return { title: "Preparing the experiment.", description: run.events.filter(event => event.stage === "workspace_progress").at(-1)?.message || "Waiting for an execution slot.", orb: "connecting", step: 2 };
   if (run.status === "repairing") {
-    if (run.repairs?.at(-1)?.afterAttempt === run.attempts.at(-1)?.number && run.workingCode) return { title: "The fix is ready.", description: "Submitting the revised code to CreateOS.", orb: "connecting", step: 2 };
+    if (run.repairs?.at(-1)?.afterAttempt === run.attempts.at(-1)?.number && run.workingCode) return { title: "The fix is ready.", description: "Submitting the revised code to the sandbox.", orb: "connecting", step: 2 };
     return { title: "Fixing a coding error.", description: "Reading the execution feedback and correcting the code.", orb: "solving", step: 2 };
   }
   if (run.status === "running") {
     if (run.result) return { title: "Bringing the evidence together.", description: "Saving the report and pausing the experiment workspace.", orb: "composing", step: 2 };
-    return { title: run.attempts.length ? "Testing the fix." : "Putting the claim to the test.", description: run.attempts.length ? "Running the revised code in CreateOS." : "Running the generated experiment in CreateOS.", orb: "working", step: 2 };
+    return { title: run.attempts.length ? "Testing the fix." : "Putting the claim to the test.", description: run.attempts.length ? "Running the revised code in the sandbox." : "Running the generated experiment in the sandbox.", orb: "working", step: 2 };
   }
   return run.events.some(event => event.stage === "source")
     ? { title: "Writing a focused experiment.", description: "Choosing a testable claim and turning the method into code.", orb: "shaping", step: 1 }
@@ -175,6 +174,5 @@ export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }
         <details className="quiet-disclosure"><summary>Activity<ChevronDown size={14} /></summary><div className="disclosure-body"><ActivityLog run={run} /></div></details>
       </div></details>
     </div>}
-    <PlatformProof run={run} />
   </main>;
 }

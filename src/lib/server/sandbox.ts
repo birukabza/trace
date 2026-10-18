@@ -23,7 +23,7 @@ export interface ExperimentSandboxSession {
 
 function sandboxClient() {
   const key = createosKey();
-  if (!key) throw new Error("CreateOS credentials are unavailable. Run stripe projects env --pull and restart the server.");
+  if (!key) throw new Error("The sandbox is not configured on the server.");
   return new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 30_000, retry: false });
 }
 
@@ -75,7 +75,7 @@ export async function createExperimentSandbox(
   const client = sandboxClient();
   const request = { ...CONTROL_REQUEST, signal };
   const wait = { ...CONTROL_WAIT, signal };
-  await onProgress("Connecting to the CreateOS workspace.");
+  await onProgress("Connecting to the sandbox.");
   const base = await client.getSandbox(SANDBOX_ID, request);
   const restoreBase = base.status === "running" || base.status === "resuming";
   let child: Sandbox | undefined;
@@ -171,10 +171,10 @@ exec(compile(tree, '<approved-experiment>', 'exec'), {'__builtins__': safe, '__n
 
 export async function executeNumerical(code: string, runId: string, attempt: number, signal: AbortSignal, sandboxId = SANDBOX_ID) {
   const key = createosKey();
-  if (!key) throw new Error("CreateOS credentials are unavailable. Run stripe projects env --pull and restart the server.");
+  if (!key) throw new Error("The sandbox is not configured on the server.");
   const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 75_000, retry: false });
   const box = await client.getSandbox(sandboxId, { signal, timeoutMs: 15_000 });
-  if (box.status !== "running") throw new Error("The experiment workspace is not running. Resume it in CreateOS, then retry the investigation.");
+  if (box.status !== "running") throw new Error("The sandbox is not running. Retry the investigation in a moment.");
   const path = `/tmp/repro-${runId}-${attempt}.py`;
   await box.files.upload(path, numericalRunner(code), { signal, timeoutMs: 15_000 });
   const started = Date.now();
@@ -249,8 +249,8 @@ async function forkPoolSandbox(client: CreateosSandboxClient, slot: number, sign
     try { child = await fork(); }
     catch (error) {
       if (!isSandboxQuotaError(error)) throw error;
-      await onProgress("CreateOS capacity is full. Releasing old per-run workspaces from the previous version.");
-      if (!(await releaseLegacyForks(signal))) throw new Error("CreateOS capacity is full and no old Trace workspace could be released. Free a sandbox in CreateOS or lower TRACE_SANDBOX_POOL_SIZE.");
+      await onProgress("Sandbox capacity is full. Releasing old workspaces.");
+      if (!(await releaseLegacyForks(signal))) throw new Error("Sandbox capacity is full right now. Try again in a few minutes.");
       child = await fork();
     }
     await child.waitUntilPaused(wait);

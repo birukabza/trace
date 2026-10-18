@@ -7,10 +7,3 @@ export const RESEARCH_LIMITS = {
   maxAttempts: 3,
 } as const;
 
-export const PROJECT_INTEGRATION = {
-  project: "createOs.stripe.hackathon",
-  service: "createos-project",
-  provider: "CreateOS",
-  provisionedThrough: "Stripe Projects",
-  verifiedAt: "2026-10-17",
-} as const;
