@@ -1,21 +1,16 @@
-# Share the Stripe Projects manifest; keep vaults and machine state local
-/.projects/*
-!/.projects/state.json
-!/.projects/state.local.json
+# AI agent and editor tooling (local only)
+/.agents/
 /.claude/
+/.cursor/
+/.cursorignore
+/AGENTS.md
+/CLAUDE.md
 
-# Share reviewed Stripe CLI instructions; keep other agent/editor tooling local
-/.agents/*
-!/.agents/skills/
-/.agents/skills/*
-!/.agents/skills/stripe-projects-cli/
-/.cursor/*
-!/.cursor/rules/
-/.cursor/rules/*
-!/.cursor/rules/stripe-projects-cli.mdc
+# Stripe Projects state: account and project identifiers stay local
+/.projects/
 
-# Private presentation notes
-/docs/demo.md
+# Internal planning and presentation notes
+/docs/
 
 # Generated model responses, experiment code, and run logs
 /experiments/
