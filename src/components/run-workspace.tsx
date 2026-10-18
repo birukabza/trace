@@ -120,7 +120,7 @@ export function RunWorkspace({ run, onBack, onApprove, onCancel, onRetry, busy }
   const active = ACTIVE_STATUSES.includes(run.status);
   const failed = ["failed", "blocked"].includes(run.status);
   const invalidOutput = run.mode === "live" && run.status === "completed" && run.attempts.length > 0 && !parseMeasurements(run.attempts.at(-1)!.stdout);
-  const showResult = !active && run.status !== "awaiting_approval" && (Boolean(run.result || run.attempts.length) || (failed && Boolean(run.plan)));
+  const showResult = !active && run.status !== "awaiting_approval" && (Boolean(run.result || run.attempts.length) || failed);
   return <main className={`workspace ${active ? "is-processing" : ""}`}>
     {!showResult && <div className="workspace-topline"><button className="text-button" onClick={onBack}><ArrowLeft size={14} />New research</button>{!active && <a className="text-button" href={run.sourceUrl} target="_blank" rel="noreferrer">Read paper<ArrowUpRight size={13} /></a>}</div>}
     {active ? <ProcessView run={run} onCancel={onCancel} busy={busy} /> : showResult ? <>{run.errorCode === "river_out_of_credit" && <CreditAlert />}<ResultView run={run} onBack={onBack} onRetry={onRetry} busy={busy} /></> : <div className="research-sheet stage-enter">

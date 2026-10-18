@@ -83,6 +83,7 @@ function organize(metrics: Metric[]) {
 /** Older runs may hold raw sandbox errors; show them in plain language. */
 function readableError(error?: string) {
   if (error && /waiting for the expected state|sandbox is (not running|paused)/i.test(error)) return "The sandbox did not start, so the experiment could not run. Your experiment is saved. Press \"Run it again\" in a minute.";
+  if (error && /exhausted its response budget/i.test(error)) return "The agent ran out of room while writing its answer, so no experiment was written. This is now handled automatically. Press \"Try again\".";
   return error;
 }
 
@@ -113,6 +114,7 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
   const runtime = run.attempts.reduce((sum, attempt) => sum + attempt.durationMs, 0);
   const elapsed = Math.max(0, new Date(run.updatedAt).getTime() - new Date(run.createdAt).getTime());
   const files = latest ? parseProject(latest.code).length : run.plan ? parseProject(run.plan.pythonCode).length : 0;
+  const canRetry = run.mode === "live" && (invalidOutput ? Boolean(run.plan) : failed);
   const status = success ? "Experiment complete" : invalidOutput ? "Finished, but the output needs a correction" : run.status === "blocked" ? "Experiment blocked" : "Experiment stopped";
   const outcome = success
     ? `The agent wrote ${files > 1 ? `a ${files}-file program` : "a program"}, ran it in an isolated sandbox${run.attempts.length > 1 ? `, and fixed its own errors ${run.attempts.length - 1} ${run.attempts.length === 2 ? "time" : "times"}` : ""}. The results below are what it measured.`
@@ -126,13 +128,13 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
       {run.plan && <p className="rv-question"><span>Question tested</span>{run.plan.summary || run.plan.title}</p>}
       <p className="rv-outcome">{outcome}</p>
       <div className="rv-actions">
-        <a className="rv-button" href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report</a>
-        {(failed || invalidOutput) && run.plan && <button className="rv-button rv-button-quiet" onClick={onRetry} disabled={busy}>{invalidOutput ? "Repair the output" : "Run it again"}</button>}
+        {canRetry && <button className="rv-button" onClick={onRetry} disabled={busy}>{invalidOutput ? "Repair the output" : run.plan ? "Run it again" : "Try again"}</button>}
+        <a className={canRetry ? "rv-button rv-button-quiet" : "rv-button"} href={`/api/runs/${encodeURIComponent(run.id)}/report`} download>Download report</a>
         <a className="rv-link" href={run.sourceUrl} target="_blank" rel="noreferrer">Read the paper<ChevronRight size={14} /></a>
       </div>
       <dl className="rv-facts">
         <div><dt>Attempts</dt><dd>{run.attempts.length} of {RESEARCH_LIMITS.maxAttempts}</dd></div>
-        <div><dt>Program</dt><dd>{files > 1 ? `${files} files` : "1 file"}</dd></div>
+        <div><dt>Program</dt><dd>{files === 0 ? "Not written" : files > 1 ? `${files} files` : "1 file"}</dd></div>
         <div><dt>Run time</dt><dd>{duration(runtime)}</dd></div>
         <div><dt>Total time</dt><dd>{duration(elapsed)}</dd></div>
       </dl>

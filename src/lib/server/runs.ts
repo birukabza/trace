@@ -107,6 +107,11 @@ export function createRun(input: Record<string, unknown>, ownerId: string) {
   if (typeof input.retryFromId === "string") {
     const original = getRun(input.retryFromId, ownerId);
     if (!original) throw new PublicRunError("Run not found.", 404);
+    // A run that stopped before writing an experiment has nothing to reuse;
+    // start a fresh investigation of the same source instead.
+    if (!original.plan && original.mode === "live" && ["failed", "blocked"].includes(original.status)) {
+      return createRun({ sourceUrl: original.sourceUrl, ...(original.repositoryUrl ? { repositoryUrl: original.repositoryUrl } : {}) }, ownerId);
+    }
     const run = prepareRetry(original);
     store().save(run);
     launch(run, signal => queueExecution(run, signal));

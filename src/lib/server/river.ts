@@ -125,16 +125,42 @@ export function isRiverCreditResponse(status: number, body: string) {
   return /insufficient (credit|balance|funds)|out of credit|no credit|credit (balance|limit)|balance (is )?(too low|insufficient|exhausted)|billing|payment required|top.?up/i.test(body);
 }
 
+// Reasoning tokens count toward the output cap. Long papers and multi-file
+// projects need room; if a response still runs out, retry once with lighter
+// reasoning so more of the budget goes to the answer itself.
+const RESPONSE_BUDGETS = [
+  { reasoning: "high", maxTokens: 65_536 },
+  { reasoning: "medium", maxTokens: 65_536 },
+] as const;
+
 export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?: AbortSignal): Promise<T> {
+  for (const [index, budget] of RESPONSE_BUDGETS.entries()) {
+    const { data, choice } = await riverCompletion(prompt, budget.reasoning, budget.maxTokens, signal);
+    if (choice?.finish_reason === "length") {
+      if (index < RESPONSE_BUDGETS.length - 1) continue;
+      throw new Error("The agent ran out of room while writing its answer, even after a retry. Try again, or focus the investigation on one claim. No experiment was executed.");
+    }
+    if (typeof choice?.message?.content !== "string") throw new Error("The agent API returned no structured answer.");
+    try { return parseModelResponse(choice.message.content, schema); }
+    catch (error) {
+      if (!(error instanceof ModelResponseError)) throw error;
+      const id = saveRejectedResponse(choice.message.content, error, { finishReason: choice.finish_reason, usage: data.usage });
+      throw new Error(`${error.message}${id ? ` Diagnostic reference: ${id}.` : ""}`);
+    }
+  }
+  throw new Error("The agent API returned no structured answer.");
+}
+
+async function riverCompletion(prompt: string, reasoning: string, maxTokens: number, signal?: AbortSignal) {
   const key = riverKey();
   if (!key) throw new Error("The agent API is not configured on the server. No experiment was run.");
-  const body = JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], reasoning_effort: "high", max_tokens: 16_384, response_format: { type: "json_object" } });
+  const body = JSON.stringify({ model: MODEL, messages: [{ role: "system", content: SYSTEM }, { role: "user", content: prompt }], reasoning_effort: reasoning, max_tokens: maxTokens, response_format: { type: "json_object" } });
   let response: Response | undefined;
   // Rate limits (429) and brief overloads (503) are common when several
   // investigations start together. Back off and retry before failing the run.
   for (let attempt = 0; attempt < 6; attempt++) {
     response = await fetch("https://api.river.ai/v1/chat/completions", {
-      method: "POST", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(300_000)]) : AbortSignal.timeout(300_000),
+      method: "POST", signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(600_000)]) : AbortSignal.timeout(600_000),
       headers: { "Authorization": `Bearer ${key}`, "Content-Type": "application/json" },
       body,
     });
@@ -154,15 +180,7 @@ export async function riverJson<T>(prompt: string, schema: z.ZodType<T>, signal?
   if (!response!.ok) throw new Error(response!.status === 429 ? "The agent API is busy right now. Wait a minute, then try again." : `The agent API returned HTTP ${response!.status}. Try again shortly.`);
   setRiverOutOfCredit(false);
   const data = await response!.json();
-  const choice = data?.choices?.[0];
-  if (choice?.finish_reason === "length") throw new Error("The model exhausted its response budget. No experiment was executed.");
-  if (typeof choice?.message?.content !== "string") throw new Error("The agent API returned no structured answer.");
-  try { return parseModelResponse(choice.message.content, schema); }
-  catch (error) {
-    if (!(error instanceof ModelResponseError)) throw error;
-    const id = saveRejectedResponse(choice.message.content, error, { finishReason: choice.finish_reason, usage: data.usage });
-    throw new Error(`${error.message}${id ? ` Diagnostic reference: ${id}.` : ""}`);
-  }
+  return { data, choice: data?.choices?.[0] };
 }
 
 export function analysisPrompt(source: { title: string; url: string; text: string; truncated: boolean }, focus?: string, repository?: { url: string; text: string }) {
