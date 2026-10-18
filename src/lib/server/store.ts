@@ -35,6 +35,13 @@ export class RunStore {
     this.db.exec("UPDATE runs SET owner_id = json_extract(body, '$.ownerId') WHERE owner_id IS NULL AND json_type(body, '$.ownerId') = 'text' AND length(json_extract(body, '$.ownerId')) > 0");
     this.db.exec("CREATE INDEX IF NOT EXISTS runs_owner_updated ON runs(owner_id, updated_at DESC)");
     this.db.exec("CREATE TABLE IF NOT EXISTS runtime_state (name TEXT PRIMARY KEY, value INTEGER NOT NULL)");
+    this.db.exec("CREATE TABLE IF NOT EXISTS pool_slots (slot INTEGER PRIMARY KEY, sandbox_id TEXT NOT NULL)");
+  }
+  poolSandbox(slot: number): string | undefined {
+    return (this.db.prepare("SELECT sandbox_id FROM pool_slots WHERE slot = ?").get(slot) as { sandbox_id: string } | undefined)?.sandbox_id;
+  }
+  savePoolSandbox(slot: number, sandboxId: string) {
+    this.db.prepare("INSERT INTO pool_slots (slot,sandbox_id) VALUES (?,?) ON CONFLICT(slot) DO UPDATE SET sandbox_id=excluded.sandbox_id").run(slot, sandboxId);
   }
   get(id: string): Run | undefined {
     const row = this.db.prepare("SELECT body FROM runs WHERE id = ?").get(id) as { body: string } | undefined;

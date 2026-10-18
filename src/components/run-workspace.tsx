@@ -111,6 +111,7 @@ function Evidence({ run }: { run: Run }) {
 }
 type ProcessPhase = { title: string; description: string; orb: OrbState; step: number };
 function processPhase(run: Run): ProcessPhase {
+  if (run.status === "queued" && run.queuePosition) return { title: run.queuePosition === 1 ? "You're next in line." : `You're number ${run.queuePosition} in line.`, description: `All shared sandboxes are busy with other investigations. ${run.queuePosition === 1 ? "Yours starts as soon as one frees up." : `${run.queuePosition - 1} ${run.queuePosition === 2 ? "investigation is" : "investigations are"} ahead of yours.`} You can leave this page open; it starts automatically.`, orb: "connecting", step: 2 };
   if (run.status === "queued") return { title: "Preparing the experiment.", description: run.events.filter(event => event.stage === "workspace_progress").at(-1)?.message || "Waiting for an execution slot.", orb: "connecting", step: 2 };
   if (run.status === "repairing") {
     if (run.repairs?.at(-1)?.afterAttempt === run.attempts.at(-1)?.number && run.workingCode) return { title: "The fix is ready.", description: "Submitting the revised code to CreateOS.", orb: "connecting", step: 2 };

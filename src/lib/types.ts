@@ -76,7 +76,9 @@ export interface Run {
   executionMode?: "automatic";
   workingCode?: { code: string; attempt: number; updatedAt: string };
   repairs?: { afterAttempt: number; diagnosis: string; summary: string; codeHash: string; pythonCode?: string; at: string }[];
-  sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean; releasedAt?: string };
+  sandbox?: { id: string; forkedFrom?: string; egressRestricted?: boolean; pausedAfterRun?: boolean; releasedAt?: string; poolSlot?: number };
+  /** Place in the shared-sandbox queue. Computed when read; never stored. */
+  queuePosition?: number;
 }
 
 export interface Health {

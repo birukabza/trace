@@ -22,7 +22,7 @@ export function AgentWorkbench({ run }: { run: Run }) {
   const view = selected ?? (waitingForRepair ? "output" : hasChanges ? "changes" : "code");
   if (!current.code) return null;
   const changes = hasChanges ? codeChanges(current.previousCode!, current.code) : [];
-  const state = run.status === "completed" ? missingMeasurements ? "Measurements missing" : "Finished" : ["failed", "blocked", "cancelled"].includes(run.status) ? "Stopped" : run.status === "running" ? run.result ? "Finished running" : "Running" : run.status === "repairing" ? waitingForRepair ? "Diagnosing error" : "Fix written" : run.status === "queued" ? "Ready to run" : "Code saved";
+  const state = run.status === "completed" ? missingMeasurements ? "Measurements missing" : "Finished" : ["failed", "blocked", "cancelled"].includes(run.status) ? "Stopped" : run.status === "running" ? run.result ? "Finished running" : "Running" : run.status === "repairing" ? waitingForRepair ? "Diagnosing error" : "Fix written" : run.status === "queued" ? run.queuePosition ? `In line · #${run.queuePosition}` : "Ready to run" : "Code saved";
   const copy = async () => { try { await navigator.clipboard.writeText(current.code!); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch { setCopied(false); } };
   return <section className="agent-workbench" aria-label="Agent code and execution">
     <div className="agent-workbench-heading"><span>experiment.py <span className="agent-version">/ attempt {current.number}</span></span><span className="agent-code-state">{state}</span></div>

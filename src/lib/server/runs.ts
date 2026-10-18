@@ -6,7 +6,8 @@ import { addEvent, runStore, transition, type RunStore } from "./store";
 import { readSource, validateSourceUrl } from "./sources";
 import { analysisPrompt, analysisSchema, planSchema, repairPrompt, repairSchema, riverJson, resolveEvidenceClaims, sourceExcerpts } from "./river";
 import { configuration, createosCredentialSource, riverKey } from "./config";
-import { createExperimentSandbox, executeNumerical, holdExecutionLease, pauseExperimentSandbox, isSandboxQuotaError, releaseExperimentSandbox } from "./sandbox";
+import { cleanupRunFiles, ensurePoolSandboxRunning, executeNumerical, holdExecutionLease, pauseExperimentSandbox, POOL_SIZE, preparePoolSandbox } from "./sandbox";
+import { acquireSlot, queuePosition, releaseSlot, slotsBusy } from "./pool";
 import { runAgentLoop } from "./agent-loop";
 import { RESEARCH_LIMITS } from "../capabilities";
 import { measurementFeedback, parseMeasurements } from "../measurements";
@@ -65,8 +66,12 @@ export function recoverInterruptedRuns(database: RunStore, controllers: Map<stri
   });
 }
 
-export function getRun(id: string, ownerId: string) { return store().getOwned(id, ownerId); }
-export function listRuns(ownerId: string) { return store().listOwned(ownerId); }
+function withQueue(run: Run): Run {
+  const position = run.status === "queued" ? queuePosition(run.id) : undefined;
+  return position ? { ...run, queuePosition: position } : run;
+}
+export function getRun(id: string, ownerId: string) { const run = store().getOwned(id, ownerId); return run && withQueue(run); }
+export function listRuns(ownerId: string) { return store().listOwned(ownerId).map(withQueue); }
 function readRun(id: string) { return store().get(id); }
 function saveActive(run: Run, signal: AbortSignal) {
   if (signal.aborted || store().get(run.id)?.status === "cancelled") throw new Error("Run cancelled.");
@@ -97,7 +102,7 @@ export function createRun(input: Record<string, unknown>, ownerId: string) {
   }
   const active = store().active().filter(item => item.status !== "awaiting_approval");
   if (active.some(item => item.ownerId === ownerId)) throw new PublicRunError("Wait for your active investigation to finish, or cancel it first.", 409);
-  if (active.length >= 3) throw new PublicRunError("All execution slots are occupied. Try again shortly.", 409);
+  if (active.length >= 30) throw new PublicRunError("The queue is full right now. Try again in a few minutes.", 409);
   if (typeof input.retryFromId === "string") {
     const original = getRun(input.retryFromId, ownerId);
     if (!original) throw new PublicRunError("Run not found.", 404);
@@ -216,10 +221,13 @@ async function queueExecution(run: Run, signal: AbortSignal) {
   validateExecutableRun(run);
   if (!configuration().createosConfigured) throw new Error("CreateOS credentials are unavailable. Pull Stripe Projects credentials and restart the server.");
   transition(run, "queued");
-  addEvent(run, "queued", "Code ready. Preparing an isolated CreateOS experiment workspace.");
+  addEvent(run, "queued", slotsBusy()
+    ? `Code ready. All ${POOL_SIZE} shared sandboxes are busy, so this investigation is waiting in line and will start automatically.`
+    : "Code ready. Preparing a shared CreateOS sandbox.");
   saveActive(run, signal);
-  worker.execution = serializeExecution(worker.execution, signal, () => execute(run, signal));
-  await worker.execution;
+  // Recovery after a restart must finish before new work reaches the sandboxes.
+  await worker.execution.catch(() => {});
+  await execute(run, signal);
 }
 
 export function cancelRun(id: string, ownerId: string) {
@@ -232,56 +240,24 @@ export function cancelRun(id: string, ownerId: string) {
 }
 
 async function execute(run: Run, signal: AbortSignal) {
-  let workspace: Awaited<ReturnType<typeof createExperimentSandbox>> | undefined;
+  let slot: number | undefined;
+  let workspace: { id: string } | undefined;
   try {
-    store().saveExecutionLease(Date.now() + 240_000);
-    const createWorkspace = () => createExperimentSandbox(run.id, signal, metadata => {
-      run.sandbox = { ...metadata };
-      const current = store().get(run.id);
-      if (signal.aborted || current?.status === "cancelled") {
-        if (current) { current.sandbox = { ...metadata }; store().save(current); }
-        signal.throwIfAborted();
-        throw new Error("Run cancelled.");
-      }
-      store().save(run);
-    }, message => {
-      addEvent(run, "workspace_progress", message);
-      saveActive(run, signal);
-    });
-    try { workspace = await createWorkspace(); }
-    catch (error) {
-      if (!isSandboxQuotaError(error)) throw error;
-      addEvent(run, "workspace_progress", "CreateOS capacity is full. Releasing an old paused experiment workspace while retaining its report.");
-      saveActive(run, signal);
-      let released = false;
-      for (const oldRun of store().reclaimableWorkspaces().slice(0, 3)) {
-        signal.throwIfAborted();
-        if (!oldRun.sandbox?.forkedFrom || worker.controllers.has(oldRun.id)) continue;
-        try { await releaseExperimentSandbox(oldRun.sandbox.id, oldRun.sandbox.forkedFrom); }
-        catch { continue; }
-        const previous = store().get(oldRun.id);
-        if (previous?.sandbox) {
-          previous.sandbox.releasedAt = new Date().toISOString();
-          addEvent(previous, "resource_released", "Paused temporary workspace released to recover CreateOS capacity. All saved source, code, measurements and execution records remain in this report.");
-          store().save(previous);
-        }
-        released = true;
-        addEvent(run, "resource_recovered", "Released an old Trace experiment fork. Retrying workspace creation after the confirmed quota rejection.");
-        saveActive(run, signal);
-        break;
-      }
-      if (!released) throw new Error("CreateOS capacity is full and no old paused Trace fork could be safely released. The base sandbox and other workspaces were preserved.");
-      signal.throwIfAborted();
-      workspace = await createWorkspace();
-    }
-    addEvent(run, "sandbox", "Created an isolated fork with restricted external networking. The original workspace is preserved.");
+    slot = await acquireSlot(run.id, signal);
+    const progress = (message: string) => { addEvent(run, "workspace_progress", message); saveActive(run, signal); };
+    progress(`Your turn. Connecting to shared sandbox ${slot} of ${POOL_SIZE}.`);
+    workspace = await preparePoolSandbox(slot, store().poolSandbox(slot), signal, progress);
+    store().savePoolSandbox(slot, workspace.id);
+    run.sandbox = { id: workspace.id, egressRestricted: true, poolSlot: slot };
+    saveActive(run, signal);
+    addEvent(run, "sandbox", `Using shared sandbox ${slot} with restricted external networking. The base workspace is preserved.`);
     const outcome = await runAgentLoop({
       initialCode: run.plan!.pythonCode, maxAttempts: RESEARCH_LIMITS.maxAttempts, signal,
       execute: async (code, attempt) => {
         run.workingCode = { code, attempt, updatedAt: new Date().toISOString() };
         addEvent(run, "resuming", attempt > 1 ? "Submitting the revised code to the isolated workspace." : "The workspace is ready. Submitting the generated code.");
         saveActive(run, signal);
-        await workspace!.resume();
+        await ensurePoolSandboxRunning(workspace!.id, signal);
         signal.throwIfAborted();
         store().saveExecutionLease(Date.now() + 110_000);
         transition(run, "running");
@@ -326,23 +302,15 @@ async function execute(run: Run, signal: AbortSignal) {
   } catch (error) { failRun(run, error, signal); }
   finally {
     if (workspace) {
-      try {
-        await workspace.pause();
-        const current = store().get(run.id);
-        if (current?.sandbox) {
-          current.sandbox.pausedAfterRun = true;
-          addEvent(current, "paused", "Experiment workspace paused. Code and execution evidence remain available in this report.");
-          store().save(current);
-        }
-      } catch { const current = store().get(run.id); if (current) { addEvent(current, "cleanup", "Workspace pause could not be confirmed; its auto-pause remains the fallback."); store().save(current); } }
+      try { await cleanupRunFiles(workspace.id, run.id); } catch { /* Files are tiny and uniquely named. */ }
     }
+    if (slot !== undefined) releaseSlot(slot);
     const current = store().get(run.id);
     if (current?.status === "running" && current.result) {
       transition(current, "completed");
       addEvent(current, "completed", "Evidence report prepared. Scope is partial verification; no published result is declared matched.");
       store().save(current);
     }
-    store().saveExecutionLease(0);
   }
 }
 

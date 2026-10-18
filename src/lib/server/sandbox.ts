@@ -193,3 +193,99 @@ export async function holdExecutionLease(started: number, now = Date.now(), wait
   const remaining = Math.max(0, started + 65_000 - now);
   if (remaining) await wait(remaining);
 }
+
+// ---------------------------------------------------------------------------
+// Shared worker pool. A fixed number of long-lived forks of the base sandbox
+// run every experiment, so the CreateOS quota never grows with traffic.
+// Each run writes only its own /tmp/repro-<run>-<attempt>.py file, and the
+// numerical policy forbids file and process access, so runs cannot read or
+// change each other's data.
+// ---------------------------------------------------------------------------
+
+export const POOL_SIZE = Math.min(5, Math.max(1, Number(process.env.TRACE_SANDBOX_POOL_SIZE) || 3));
+const poolMarker = (slot: number) => `TRACE_POOL_SLOT_${slot}`;
+const LIVE_STATUSES = new Set(["creating", "forking", "running", "resuming", "pausing", "paused"]);
+
+async function findPoolSandbox(client: CreateosSandboxClient, slot: number, knownId: string | undefined, signal: AbortSignal): Promise<Sandbox | undefined> {
+  const request = { ...CONTROL_REQUEST, signal };
+  if (knownId) {
+    try {
+      const box = await client.getSandbox(knownId, request);
+      if (LIVE_STATUSES.has(box.status) && box.data.forked_from === SANDBOX_ID && box.data.envs?.includes(poolMarker(slot))) return box;
+    } catch { /* Fall back to discovery below. */ }
+  }
+  const boxes = await client.listSandboxes(request);
+  return boxes.find(box => LIVE_STATUSES.has(box.status) && box.data.forked_from === SANDBOX_ID && box.data.envs?.includes(poolMarker(slot)));
+}
+
+/** Destroys paused per-run forks left by the previous one-fork-per-run design. */
+export async function releaseLegacyForks(signal: AbortSignal): Promise<number> {
+  const client = sandboxClient();
+  const request = { ...CONTROL_REQUEST, signal };
+  const boxes = await client.listSandboxes(request);
+  let released = 0;
+  for (const box of boxes) {
+    if (box.id === SANDBOX_ID || box.status !== "paused" || box.data.forked_from !== SANDBOX_ID) continue;
+    if (!box.data.envs?.includes("TRACE_EXPERIMENT_ID")) continue;
+    await box.destroy(request);
+    await box.waitUntilDestroyed({ ...CONTROL_WAIT, signal });
+    released++;
+  }
+  return released;
+}
+
+async function forkPoolSandbox(client: CreateosSandboxClient, slot: number, signal: AbortSignal, onProgress: (message: string) => void | Promise<void>): Promise<Sandbox> {
+  const request = { ...CONTROL_REQUEST, signal };
+  const wait = { ...CONTROL_WAIT, signal };
+  const base = await client.getSandbox(SANDBOX_ID, request);
+  const restoreBase = base.status === "running" || base.status === "resuming";
+  try {
+    await onProgress(`Creating shared sandbox ${slot}. This happens once and takes about a minute.`);
+    if (base.status === "resuming") await base.waitUntilRunning(wait);
+    if (base.status === "running") await base.pause(request);
+    if (base.status !== "paused") await base.waitUntilPaused(wait);
+    const fork = () => base.fork({ start_paused: true, ingress_enabled: false, egress: EXPERIMENT_EGRESS, envs: { [poolMarker(slot)]: "1" } }, request);
+    let child: Sandbox;
+    try { child = await fork(); }
+    catch (error) {
+      if (!isSandboxQuotaError(error)) throw error;
+      await onProgress("CreateOS capacity is full. Releasing old per-run workspaces from the previous version.");
+      if (!(await releaseLegacyForks(signal))) throw new Error("CreateOS capacity is full and no old Trace workspace could be released. Free a sandbox in CreateOS or lower TRACE_SANDBOX_POOL_SIZE.");
+      child = await fork();
+    }
+    await child.waitUntilPaused(wait);
+    return child;
+  } finally { if (restoreBase) await resumeWorkspace(base); }
+}
+
+/** Returns a running, egress-verified pool sandbox for the slot, creating it if needed. */
+export async function preparePoolSandbox(slot: number, knownId: string | undefined, signal: AbortSignal, onProgress: (message: string) => void | Promise<void> = () => {}): Promise<{ id: string; forkedFrom: string }> {
+  const client = sandboxClient();
+  const request = { ...CONTROL_REQUEST, signal };
+  let box = await findPoolSandbox(client, slot, knownId, signal);
+  if (!box) box = await forkPoolSandbox(client, slot, signal, onProgress);
+  await onProgress(`Starting shared sandbox ${slot}.`);
+  await resumeWorkspace(box, signal);
+  await box.setAutoPause(300, request);
+  const policy = await box.getEgress(request);
+  if (policy.egress.length !== EXPERIMENT_EGRESS.length || !EXPERIMENT_EGRESS.every(rule => policy.egress.includes(rule))) {
+    throw new Error("The shared sandbox network policy could not be verified. No experiment was executed.");
+  }
+  return { id: box.id, forkedFrom: SANDBOX_ID };
+}
+
+/** Removes a finished run's script files. Best effort; files are tiny and uniquely named. */
+export async function cleanupRunFiles(sandboxId: string, runId: string): Promise<void> {
+  const key = createosKey();
+  if (!key || !/^[0-9a-f-]{36}$/.test(runId)) return;
+  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 20_000, retry: false });
+  const box = await client.getSandbox(sandboxId, CONTROL_REQUEST);
+  if (box.status !== "running") return;
+  await box.runCommand("sh", ["-c", `rm -f /tmp/repro-${runId}-*.py`], { timeoutMs: 15_000 });
+}
+
+/** Makes sure a pool sandbox is running before an attempt; auto-pause may have stopped it during a repair. */
+export async function ensurePoolSandboxRunning(id: string, signal: AbortSignal): Promise<void> {
+  const box = await sandboxClient().getSandbox(id, { ...CONTROL_REQUEST, signal });
+  await resumeWorkspace(box, signal);
+}
