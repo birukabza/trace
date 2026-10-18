@@ -1,6 +1,7 @@
 # Share the Stripe Projects manifest; keep vaults and machine state local
 /.projects/*
 !/.projects/state.json
+!/.projects/state.local.json
 /.claude/
 
 # Share reviewed Stripe CLI instructions; keep other agent/editor tooling local
