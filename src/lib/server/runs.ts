@@ -14,6 +14,7 @@ import { DATA_LIMITS, datasetSlug, describeCandidates, resolveDownload, searchDa
 import type { DatasetFile } from "../types";
 import { RESEARCH_LIMITS } from "../capabilities";
 import { measurementFeedback, parseMeasurements } from "../measurements";
+import { comparisonVerdict, extractComparisons } from "../comparisons";
 import { PublicRunError } from "./http";
 import { dataPath } from "./paths";
 
@@ -315,12 +316,20 @@ async function execute(run: Run, signal: AbortSignal) {
       transition(run, "blocked"); run.error = outcome.reason || "No faithful repair was available within the attempt budget.";
       addEvent(run, "blocked", run.error); saveActive(run, signal); return;
     }
-    const metrics = observedMetrics(run.attempts.at(-1)!.stdout);
+    const stdout = run.attempts.at(-1)!.stdout;
+    const metrics = observedMetrics(stdout);
+    const comparisons = extractComparisons(parseMeasurements(stdout));
+    const verdict = comparisonVerdict(comparisons);
+    const matched = comparisons.filter(item => item.outcome === "matched").length;
+    const attemptsText = `${run.attempts.length} execution attempt${run.attempts.length === 1 ? "" : "s"}`;
     run.result = {
-      verdict: "partial",
-      summary: `The agent completed the experiment in ${run.attempts.length} execution attempt${run.attempts.length === 1 ? "" : "s"}. These values come from its captured stdout. Successful execution does not independently validate the implementation or reproduce a published benchmark.`,
+      verdict: verdict ?? "partial",
+      summary: comparisons.length
+        ? `${matched} of ${comparisons.length} reported value${comparisons.length === 1 ? "" : "s"} matched the paper within tolerance, after ${attemptsText}. Tolerances are bounded by fixed rules; this checks the stated experiment only and does not prove the paper's broader claims.`
+        : `The agent completed the experiment in ${attemptsText}. These values come from its captured stdout. Successful execution does not independently validate the implementation or reproduce a published benchmark.`,
       metrics,
-      limitations: [...run.plan!.limitations, "Measurements are produced by model-generated code. Independent implementation and protocol validation are still required.", "No automated matching verdict is assigned. A successful process is not proof of a scientific claim."],
+      comparisons: comparisons.length ? comparisons : undefined,
+      limitations: [...run.plan!.limitations, "Measurements are produced by model-generated code. Independent implementation and protocol validation are still required.", comparisons.length ? "Matches are judged against tolerances bounded by fixed rules (at most 3% of the reported value), not by the model." : "No paper values were compared, so no matching verdict is assigned. A successful process is not proof of a scientific claim."],
     };
     addEvent(run, "report", "Measurements saved. Preparing the evidence report and pausing the experiment workspace."); saveActive(run, signal);
   } catch (error) { failRun(run, error, signal); }

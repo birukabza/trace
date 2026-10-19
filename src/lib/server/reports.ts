@@ -36,6 +36,11 @@ export function markdownReport(run: Run) {
     ...(run.datasets?.selected.length ? ["## Data sources", run.datasets.selected.map(file => `- ${inline(file.title)}: ${inline(file.pageUrl)}${file.bytes ? `, ${(file.bytes / 1e6).toFixed(1)} MB` : ""}${file.sha256 ? `, SHA-256 ${inline(file.sha256)}` : ""}${file.link ? `, read from ${inline(file.link)}` : ", not downloaded"}`).join("\n"), ...(run.datasets.unavailable.length ? [`Not found: ${run.datasets.unavailable.map(item => inline(`${item.dataset} (${item.reason})`)).join("; ")}`] : [])] : []),
     `Dataset: ${inline(run.plan?.dataset || "Not available")}`,
     "## Evidence", inline(run.result?.summary || run.error || "This run has not produced measurements."),
+    ...(run.result?.comparisons?.length ? [
+      "## Compared with the paper",
+      "Tolerances are bounded by fixed rules: never tighter than the paper's printed precision and never looser than 3% of the reported value.",
+      `| Result | Paper | Measured | Difference | Allowed | Verdict |\n|---|---|---|---|---|---|\n${run.result.comparisons.map(item => `| ${inline(item.item)} | ${item.reported} | ${Number(item.measured.toPrecision(6))} | ${item.difference >= 0 ? "+" : "-"}${Number(Math.abs(item.difference).toPrecision(4))} | ${Number(item.tolerance.toPrecision(3))} | ${item.outcome === "matched" ? "Matched" : "Differs"} |`).join("\n")}`,
+    ] : []),
     `| Metric | Reported | Observed |\n|---|---|---|\n${(run.result?.metrics || []).map(metric => `| ${inline(metric.name)} | ${inline(metric.reported || "Not compared")} | ${inline(metric.observed)} |`).join("\n")}`,
     "## Limitations", (run.result?.limitations || run.plan?.limitations || ["No execution has occurred."]).map(value => `- ${inline(value)}`).join("\n"),
     "## Initial generated Python", run.plan ? fenced(run.plan.pythonCode, "python") : "Not generated.",

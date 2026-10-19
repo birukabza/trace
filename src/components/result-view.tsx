@@ -120,7 +120,9 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
   const elapsed = Math.max(0, new Date(run.updatedAt).getTime() - new Date(run.createdAt).getTime());
   const files = latest ? parseProject(latest.code).length : run.plan ? parseProject(run.plan.pythonCode).length : 0;
   const canRetry = run.mode === "live" && (invalidOutput ? Boolean(run.plan) : failed);
-  const status = success ? "Experiment complete" : invalidOutput ? "Finished, but the output needs a correction" : run.status === "blocked" ? "Experiment blocked" : "Experiment stopped";
+  const comparisons = !invalidOutput ? result?.comparisons ?? [] : [];
+  const matchedCount = comparisons.filter(item => item.outcome === "matched").length;
+  const status = success && comparisons.length ? `${matchedCount} of ${comparisons.length} result${comparisons.length === 1 ? "" : "s"} ${matchedCount === 1 && comparisons.length === 1 ? "matches" : "match"} the paper` : success ? "Experiment complete" : invalidOutput ? "Finished, but the output needs a correction" : run.status === "blocked" ? "Experiment blocked" : "Experiment stopped";
   const outcome = success
     ? `The agent wrote ${files > 1 ? `a ${files}-file program` : "a program"}, ran it in an isolated sandbox${run.attempts.length > 1 ? `, and fixed its own errors ${run.attempts.length - 1} ${run.attempts.length === 2 ? "time" : "times"}` : ""}. The results below are what it measured.`
     : invalidOutput ? "The program ran, but it did not print its results in the expected format. You can ask the agent to repair it."
@@ -144,6 +146,21 @@ export function ResultView({ run, onBack, onRetry, busy }: { run: Run; onBack: (
         <div><dt>Total time</dt><dd>{duration(elapsed)}</dd></div>
       </dl>
     </header>
+
+    {comparisons.length > 0 && <section className="rv-block">
+      <h2>Compared with the paper</h2>
+      <p className="rv-note">Each number the paper reports, next to what this run measured. A result matches when the difference is within the allowed tolerance, which fixed rules cap at 3% of the paper's value.</p>
+      <div className="rv-table rv-compare"><div className="rv-table-scroll" tabIndex={0} role="region" aria-label="Comparison with the paper"><table>
+        <thead><tr><th>Result</th><th>Paper</th><th>Measured</th><th>Difference</th><th>Verdict</th></tr></thead>
+        <tbody>{comparisons.map((item, index) => <tr key={`${item.item}-${index}`}>
+          <td title={item.note}>{humanize(item.item)}</td>
+          <td>{formatNumber(item.reported)}</td>
+          <td>{formatNumber(item.measured)}</td>
+          <td>{item.difference >= 0 ? "+" : "−"}{formatNumber(Math.abs(item.difference))} <span className="rv-tolerance">(± {formatNumber(item.tolerance)} allowed)</span></td>
+          <td><span className={`rv-verdict rv-verdict-${item.outcome}`}>{item.outcome === "matched" ? "Matched" : "Differs"}</span></td>
+        </tr>)}</tbody>
+      </table></div></div>
+    </section>}
 
     {result && !invalidOutput && (figures.length > 0 || tables.length > 0 || notes.length > 0) && <section className="rv-block">
       <h2>Results</h2>

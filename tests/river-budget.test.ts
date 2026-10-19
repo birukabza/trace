@@ -36,3 +36,20 @@ test("a response that runs out of room twice fails with a clear message", async 
     assert.equal(fetch.mock.callCount(), 2);
   } finally { fetch.mock.restore(); }
 });
+
+test("a dropped connection to the agent API is retried", async t => {
+  let calls = 0;
+  const timers = t.mock.timers;
+  timers.enable({ apis: ["setTimeout"] });
+  const fetch = t.mock.method(globalThis, "fetch", async () => {
+    calls++;
+    if (calls === 1) throw new TypeError("fetch failed");
+    return Response.json({ choices: [{ finish_reason: "stop", message: { content: JSON.stringify({ answer: "ok" }) } }] });
+  });
+  try {
+    const pending = withKey(() => riverJson("prompt", schema));
+    for (let i = 0; i < 20 && calls < 2; i++) { await new Promise(resolve => setImmediate(resolve)); timers.tick(10_000); }
+    assert.deepEqual(await pending, { answer: "ok" });
+    assert.equal(calls, 2);
+  } finally { fetch.mock.restore(); timers.reset(); }
+});

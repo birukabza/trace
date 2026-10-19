@@ -3,7 +3,7 @@ export const RESEARCH_LIMITS = {
   sourceCharacters: 80_000,
   paperWithRepositoryCharacters: 60_000,
   repositoryCharacters: 20_000,
-  executionSeconds: 120,
+  executionSeconds: 240,
   maxAttempts: 3,
 } as const;
 

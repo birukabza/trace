@@ -8,6 +8,11 @@ import { INSPECT_DATA_PY } from "./inspect-data";
 // address keeps the host policy restrictive without exposing package registries.
 // This is restricted external egress, not a provider-supported deny-all token.
 const EXPERIMENT_EGRESS = ["192.0.2.1:443"];
+// The SDK's built-in HTTP/2 transport throws from a stream event handler when
+// the service closes a stream without a status, which crashes the process and
+// leaves the request hanging (SDK 0.8.2). Passing a fetch makes the SDK use
+// Node's standard fetch instead, which reports such failures as normal errors.
+const sandboxFetch: typeof fetch = (input, init) => globalThis.fetch(input, init);
 const CONTROL_REQUEST = { timeoutMs: 30_000, retry: false } as const;
 const CONTROL_WAIT = { timeoutMs: 180_000, request: { timeoutMs: 10_000, retry: false } } as const;
 
@@ -27,7 +32,7 @@ export interface ExperimentSandboxSession {
 function sandboxClient() {
   const key = createosKey();
   if (!key) throw new Error("The sandbox is not configured on the server.");
-  return new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 30_000, retry: false });
+  return new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, fetch: sandboxFetch, timeoutMs: 30_000, retry: false });
 }
 
 async function pauseWorkspace(box: Sandbox): Promise<void> {
@@ -175,7 +180,7 @@ exec(compile(tree, '<approved-experiment>', 'exec'), {'__builtins__': safe, '__n
 export async function executeNumerical(code: string, runId: string, attempt: number, signal: AbortSignal, sandboxId = SANDBOX_ID) {
   const key = createosKey();
   if (!key) throw new Error("The sandbox is not configured on the server.");
-  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 75_000, retry: false });
+  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, fetch: sandboxFetch, timeoutMs: 75_000, retry: false });
   const box = await client.getSandbox(sandboxId, { signal, timeoutMs: 15_000 });
   if (box.status !== "running") throw new Error("The sandbox is not running. Retry the investigation in a moment.");
   const path = `/tmp/repro-${runId}-${attempt}.py`;
@@ -332,7 +337,7 @@ export async function preparePoolSandbox(slot: number, knownId: string | undefin
 export async function cleanupRunFiles(sandboxId: string, runId: string): Promise<void> {
   const key = createosKey();
   if (!key || !/^[0-9a-f-]{36}$/.test(runId)) return;
-  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: 20_000, retry: false });
+  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, fetch: sandboxFetch, timeoutMs: 20_000, retry: false });
   const box = await client.getSandbox(sandboxId, CONTROL_REQUEST);
   if (box.status !== "running") return;
   await box.runCommand("sh", ["-c", `rm -f /tmp/repro-${runId}-*.py; rm -rf /tmp/trace-runs/${runId}`], { timeoutMs: 15_000 });
@@ -378,7 +383,7 @@ export async function executeProject(bundle: string, runId: string, attempt: num
   if (problem) return { stdout: "", stderr: `Project rejected before execution: ${problem}`, exitCode: 2, durationMs: 0 };
 
   const seconds = RESEARCH_LIMITS.executionSeconds;
-  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, timeoutMs: (seconds + 40) * 1000, retry: false });
+  const client = new CreateosSandboxClient({ apiKey: key, baseUrl: SANDBOX_URL, fetch: sandboxFetch, timeoutMs: (seconds + 40) * 1000, retry: false });
   const box = await client.getSandbox(sandboxId, { signal, timeoutMs: 15_000 });
   if (box.status !== "running") throw new Error("The sandbox is not running. Retry the investigation in a moment.");
 
@@ -410,7 +415,7 @@ export async function executeProject(bundle: string, runId: string, attempt: num
     `cd ${shellQuote(directory)}`,
     `chown -hR ${uid}:${uid} . && chmod 700 .`,
     `PY=$(cat ${PYTHON_RECORD} 2>/dev/null); [ -x "$PY" ] || PY=python3`,
-    `prlimit ${limits} -- setpriv --reuid=${uid} --regid=${uid} --clear-groups --no-new-privs -- timeout --signal=TERM --kill-after=5 ${seconds} env -i ${environment} "$PY" -E -s main.py > .stdout 2> .stderr`,
+    `prlimit ${limits} -- setpriv --reuid=${uid} --regid=${uid} --clear-groups --no-new-privs -- timeout --signal=TERM --kill-after=5 ${seconds} env -i ${environment} "$PY" -E -s -u -B -W ignore::FutureWarning -W ignore::DeprecationWarning main.py > .stdout 2> .stderr`,
     "code=$?",
     `pkill -KILL -u ${uid} 2>/dev/null`,
     // Long output keeps its beginning and its complete last line, where the

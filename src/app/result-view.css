@@ -90,3 +90,12 @@
   .rv-grid { grid-template-columns: 1fr; gap: 22px; }
   .rv-steps li { grid-template-columns: 1fr; gap: 2px; }
 }
+
+/* Paper versus measured */
+.rv-compare { margin-top: 24px; }
+.rv-compare td:first-child { white-space: normal; min-width: 180px; }
+.rv-tolerance { color: var(--rv-gray); font-size: 12px; }
+.rv-verdict { display: inline-flex; align-items: center; gap: 7px; font-weight: 600; }
+.rv-verdict::before { content: ""; width: 7px; height: 7px; border-radius: 50%; }
+.rv-verdict-matched::before { background: #8fd3a0; }
+.rv-verdict-differed::before { background: #e3c07a; }

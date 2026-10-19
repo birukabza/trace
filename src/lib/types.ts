@@ -90,6 +90,8 @@ export interface ExperimentResult {
   summary: string;
   metrics: { name: string; reported?: string; observed: string }[];
   limitations: string[];
+  /** Paper-versus-measured checks decided by fixed rules, not by the model. */
+  comparisons?: import("./comparisons").Comparison[];
 }
 
 export interface Run {

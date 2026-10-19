@@ -142,7 +142,7 @@ test("restart recovery keeps queued execution behind a durable remote lease even
   const interrupted = { ...run(), status: "running" as const }; database.save(interrupted);
   database.save({ ...run(), id: "repairing", status: "repairing" });
   database.save({ ...run(), id: "awaiting-review", status: "awaiting_approval" });
-  const until = Date.now() + 200_000; database.saveExecutionLease(until);
+  const until = Date.now() + 400_000; database.saveExecutionLease(until);
   let release = () => {}; let started = false; let waitedUntil = 0;
   const recovered = recoverInterruptedRuns(database, new Map(), deadline => { waitedUntil = deadline; return new Promise<void>(resolve => { release = resolve; }); });
   const queued = recovered.then(() => { started = true; });
