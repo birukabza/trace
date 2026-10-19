@@ -72,7 +72,35 @@ function RepairRecord({ run }: { run: Run }) {
 
 
 type ProcessPhase = { title: string; description: string; orb: OrbState; step: number };
+/** Headline while the agent finds, downloads and checks real data. */
+function dataPhase(run: Run): ProcessPhase | undefined {
+  if (!["analyzing", "queued"].includes(run.status) || run.attempts.length) return;
+  const latest = run.events.at(-1);
+  const message = (stage: string) => [...run.events].reverse().find(event => event.stage === stage)?.message;
+  switch (latest?.stage) {
+    case "planned":
+    case "dataset_search":
+      return { title: "Finding the dataset.", description: message("dataset_search") || "The experiment needs real data. Searching the paper's links, GitHub, OpenML, Hugging Face and Zenodo.", orb: "searching", step: 1 };
+    case "dataset_found":
+    case "dataset_candidate":
+      return { title: "Comparing the candidates.", description: `${message("dataset_found") ?? ""} The agent is checking which files are the dataset the paper used.`.trim(), orb: "shaping", step: 1 };
+    case "dataset_selected":
+    case "dataset_missing":
+      return { title: "Data chosen.", description: message("dataset_selected") || latest.message, orb: "shaping", step: 1 };
+    case "dataset_fetch":
+    case "dataset_progress":
+      return { title: "Downloading the data.", description: message("dataset_progress") || message("dataset_fetch") || "Downloading into the sandbox.", orb: "connecting", step: 2 };
+    case "dataset_ready":
+      return { title: "Checking the data.", description: latest.message, orb: "working", step: 2 };
+    case "writing":
+      return { title: "Writing the experiment against the real data.", description: "The agent has the files and their previews, and is writing code that reads them.", orb: "shaping", step: 1 };
+  }
+}
+
 function processPhase(run: Run): ProcessPhase {
+  if (run.status === "queued" && run.queuePosition) return { title: run.queuePosition === 1 ? "You're next in line." : `You're number ${run.queuePosition} in line.`, description: `All shared sandboxes are busy with other investigations. ${run.queuePosition === 1 ? "Yours starts as soon as one frees up." : `${run.queuePosition - 1} ${run.queuePosition === 2 ? "investigation is" : "investigations are"} ahead of yours.`} You can leave this page open; it starts automatically.`, orb: "connecting", step: 2 };
+  const data = dataPhase(run);
+  if (data) return data;
   if (run.status === "queued" && run.queuePosition) return { title: run.queuePosition === 1 ? "You're next in line." : `You're number ${run.queuePosition} in line.`, description: `All shared sandboxes are busy with other investigations. ${run.queuePosition === 1 ? "Yours starts as soon as one frees up." : `${run.queuePosition - 1} ${run.queuePosition === 2 ? "investigation is" : "investigations are"} ahead of yours.`} You can leave this page open; it starts automatically.`, orb: "connecting", step: 2 };
   if (run.status === "queued") return { title: "Preparing the experiment.", description: run.events.filter(event => event.stage === "workspace_progress").at(-1)?.message || "Waiting for an execution slot.", orb: "connecting", step: 2 };
   if (run.status === "repairing") {
@@ -98,7 +126,7 @@ export function ProcessView({ run, onCancel, busy }: { run?: Run; onCancel?: () 
     {run && <>
       <ol className="phase-trail" aria-label="Investigation progress">{["Read", "Write", run.status === "repairing" ? "Repair" : "Run"].map((label, index) => <li key={index} aria-current={index === phase.step ? "step" : undefined} className={index < phase.step ? "phase-done" : ""}>{index < phase.step ? <Check size={10} aria-hidden="true" /> : <span aria-hidden="true" />}{label}</li>)}</ol>
       <AgentConsole key={`console-${run.id}`} run={run} />
-      <AgentWorkbench key={run.id} run={run} />
+      {!(run.plan?.datasets?.length && !run.datasets?.codeWritten) && <AgentWorkbench key={run.id} run={run} />}
       <details className="agent-inspection product-disclosure"><summary>Research context<ChevronDown size={13} aria-hidden="true" /></summary><div className="product-disclosure-body">
         {run.plan && <><p className="agent-question">{run.plan.summary || run.plan.title}</p><p>{SCOPE_LABELS[run.plan.scope]}. This is the question Trace is testing.</p></>}
         <RepairRecord run={run} />

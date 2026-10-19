@@ -449,7 +449,7 @@ const DATA_UID = 19_999;
 export type FetchFile = { key: string; url: string; filename: string; link: string; maxBytes: number };
 export type FetchedFile = { key: string; ok: boolean; bytes: number; sha256?: string; error?: string; extracted?: boolean; fileCount?: number; listing: string[]; previews: { path: string; text: string }[]; target: string; extractedTarget?: string };
 
-export async function fetchDatasets(sandboxId: string, files: FetchFile[], signal: AbortSignal): Promise<FetchedFile[]> {
+export async function fetchDatasets(sandboxId: string, files: FetchFile[], signal: AbortSignal, onProgress?: (bytes: number) => void): Promise<FetchedFile[]> {
   if (!files.length) return [];
   const box = await sandboxClient().getSandbox(sandboxId, { ...CONTROL_REQUEST, signal });
   if (box.status !== "running") throw new SandboxUnavailableError();
@@ -465,8 +465,26 @@ export async function fetchDatasets(sandboxId: string, files: FetchFile[], signa
   let log = "";
   try {
     await box.setEgress(hosts.map(host => `${host}:443`), { ...CONTROL_REQUEST, signal });
-    const { result } = await box.runCommand("sh", ["-c", [`mkdir -p ${DATA_ROOT} && chmod 755 ${DATA_ROOT}`, ...downloads].join("; ")], { signal, timeoutMs: 20 * 60_000 });
-    log = result.stdout + result.stderr;
+    const download = box.runCommand("sh", ["-c", [`mkdir -p ${DATA_ROOT} && chmod 755 ${DATA_ROOT}`, ...downloads].join("; ")], { signal, timeoutMs: 20 * 60_000 });
+    // Report the downloaded size every few seconds so people can see progress.
+    let finished = false;
+    const watcher = (async () => {
+      if (!onProgress) return;
+      const folders = files.map(file => shellQuote(`${DATA_ROOT}/${file.key}`)).join(" ");
+      while (!finished && !signal.aborted) {
+        await new Promise(resolve => setTimeout(resolve, 4_000));
+        if (finished) break;
+        try {
+          const { result } = await box.runCommand("sh", ["-c", `du -scb ${folders} 2>/dev/null | tail -1 | cut -f1`], { signal, timeoutMs: 10_000 });
+          const bytes = Number(result.stdout.trim());
+          if (Number.isFinite(bytes)) onProgress(bytes);
+        } catch { /* Progress is best effort. */ }
+      }
+    })();
+    try {
+      const { result } = await download;
+      log = result.stdout + result.stderr;
+    } finally { finished = true; await watcher.catch(() => {}); }
   } finally {
     // Always lock the network again; refuse to continue if that cannot be confirmed.
     await box.setEgress(EXPERIMENT_EGRESS, CONTROL_REQUEST);

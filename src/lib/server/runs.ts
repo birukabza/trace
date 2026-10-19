@@ -347,6 +347,10 @@ async function chooseDatasets(run: Run, paperText: string, signal: AbortSignal) 
   const found = await searchDatasets(requests, { paperText, repositoryUrl: run.repositoryUrl }, signal);
   const total = Object.values(found).reduce((sum, list) => sum + list.length, 0);
   addEvent(run, "dataset_found", total ? `Found ${total} candidate files: ${Object.entries(found).map(([name, list]) => `${list.length} for ${name}`).join(", ")}.` : `No downloadable files were found for ${names}.`);
+  // Show every candidate the agent will compare, not just a count.
+  for (const [name, list] of Object.entries(found)) for (const candidate of list) {
+    addEvent(run, "dataset_candidate", `${candidate.source === "url" ? "link" : candidate.source} · ${candidate.title}${candidate.bytes ? ` · ${candidate.bytes >= 1e6 ? `${(candidate.bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(candidate.bytes / 1e3))} KB`}` : ""}${candidate.detail ? ` · ${candidate.detail}` : ""}${Object.keys(found).length > 1 ? ` (for ${name})` : ""}`);
+  }
   saveActive(run, signal);
   if (!total) {
     run.datasets = { selected: [], unavailable: requests.map(request => ({ dataset: request.name, reason: "No downloadable source was found." })) };
@@ -393,7 +397,19 @@ async function prepareData(run: Run, sandboxId: string, signal: AbortSignal) {
   const hosts = [...new Set(files.map(file => new URL(file.url).hostname))];
   addEvent(run, "dataset_fetch", `Downloading ${files.length} file${files.length === 1 ? "" : "s"} into the sandbox. The network opens only to ${hosts.join(", ") || "no hosts"}, and only for the download.`);
   saveActive(run, signal);
-  const fetched = await fetchDatasets(sandboxId, files, signal);
+  // One console line that updates in place with the downloaded size.
+  const megabytes = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(2)} GB` : `${(value / 1e6).toFixed(1)} MB`;
+  const progress = { id: randomUUID(), at: new Date().toISOString(), stage: "dataset_progress", message: `Downloaded 0 MB${planned ? ` of ${megabytes(planned)}` : ""}.` };
+  run.events.push(progress);
+  saveActive(run, signal);
+  const fetched = await fetchDatasets(sandboxId, files, signal, bytes => {
+    if (signal.aborted) return;
+    const shown = planned ? Math.min(bytes, planned) : bytes;
+    progress.message = `Downloaded ${megabytes(shown)}${planned ? ` of ${megabytes(planned)} (${Math.round((shown / planned) * 100)}%)` : " so far"}.`;
+    run.updatedAt = new Date().toISOString();
+    store().save(run);
+  });
+  if (planned) progress.message = `Downloaded ${megabytes(planned)} of ${megabytes(planned)} (100%).`;
   const links: { link: string; target: string }[] = [];
   const lines: string[] = [];
   let bytes = 0;

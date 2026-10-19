@@ -31,6 +31,8 @@ const COMMANDS: Record<string, { command: string; tone?: Tone }> = {
   planned: { command: "plan_experiment", tone: "agent" },
   dataset_search: { command: "search_datasets", tone: "agent" },
   dataset_found: { command: "candidates" },
+  dataset_candidate: { command: "  candidate" },
+  dataset_progress: { command: "download_progress" },
   dataset_selected: { command: "select_data", tone: "ok" },
   dataset_missing: { command: "data_unavailable", tone: "warn" },
   dataset_fetch: { command: "download_data" },
