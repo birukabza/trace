@@ -121,6 +121,17 @@ export function parseModelResponse<T>(content: string, schema: z.ZodType<T>): T 
     for (const list of [(value as Record<string, unknown>).choices, (value as Record<string, unknown>).unavailable]) if (Array.isArray(list)) for (const item of list) clip(item, "reason", 2000);
   }
   if (Object.is(schema, dataCodeSchema)) { clip(value, "notes", 3000); clip(value, "dataset", 3000); }
+  // Models sometimes send an empty pythonCode or files alongside the real
+  // project. Treat blank alternatives as absent; the schema still requires
+  // one real form of code.
+  const dropBlankCode = (holder: unknown) => {
+    if (!holder || typeof holder !== "object") return;
+    const record = holder as Record<string, unknown>;
+    if (typeof record.pythonCode === "string" && record.pythonCode.trim() === "") delete record.pythonCode;
+    if (Array.isArray(record.files) && record.files.length === 0) delete record.files;
+  };
+  if (Object.is(schema, repairSchema)) dropBlankCode(value);
+  if (Object.is(schema, analysisSchema) && value && typeof value === "object") dropBlankCode((value as Record<string, unknown>).plan);
   const parsed = schema.safeParse(value);
   if (!parsed.success) throw new ModelResponseError("invalid_schema", parsed.error.issues.map(issue => ({
     path: issue.path.map(String).join(".") || "response", code: issue.code, message: issue.message,
